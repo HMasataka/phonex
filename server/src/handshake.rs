@@ -58,7 +58,7 @@ async fn candidate(Json(req): Json<CandidateRequest>) -> () {
     }
 }
 
-async fn sdp(Json(sdp): Json<RTCSessionDescription>) {
+async fn sdp(Json(req): Json<RTCSessionDescription>) {
     let pc = {
         let pcm = PEER_CONNECTION_MUTEX.lock().await;
         pcm.clone().unwrap()
@@ -68,7 +68,9 @@ async fn sdp(Json(sdp): Json<RTCSessionDescription>) {
         addr.clone()
     };
 
-    if let Err(err) = pc.set_remote_description(sdp).await {
+    println!("Req: {:?}", req);
+
+    if let Err(err) = pc.set_remote_description(req).await {
         panic!("{}", err);
     }
 
