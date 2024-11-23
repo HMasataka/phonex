@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use axum::{routing::post, Router};
+use axum::{routing::post, Json, Router};
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 use tracing_spanned::SpanErr;
@@ -38,20 +38,10 @@ pub async fn signal_candidate(addr: &str, c: &RTCIceCandidate) -> Result<(), Spa
     Ok(())
 }
 
-async fn candidate(request: axum::http::Request<axum::body::Body>) -> () {
+async fn candidate(Json(req): Json<CandidateRequest>) -> () {
     let pc = {
         let pcm = PEER_CONNECTION_MUTEX.lock().unwrap();
         pcm.clone().unwrap()
-    };
-
-    let limit = 2048usize;
-    let body = request.into_body();
-    let bytes = axum::body::to_bytes(body, limit).await.unwrap();
-    let body_str = String::from_utf8(bytes.to_vec()).unwrap();
-
-    let req = match serde_json::from_str::<CandidateRequest>(&body_str) {
-        Ok(s) => s,
-        Err(err) => panic!("{}", err),
     };
 
     println!("Req: {:?}", req);
@@ -67,7 +57,7 @@ async fn candidate(request: axum::http::Request<axum::body::Body>) -> () {
     }
 }
 
-async fn sdp(request: axum::http::Request<axum::body::Body>) -> () {
+async fn sdp(Json(sdp): Json<RTCSessionDescription>) {
     let pc = {
         let pcm = PEER_CONNECTION_MUTEX.lock().unwrap();
         pcm.clone().unwrap()
@@ -75,17 +65,6 @@ async fn sdp(request: axum::http::Request<axum::body::Body>) -> () {
     let addr = {
         let addr = ADDRESS.lock().unwrap();
         addr.clone()
-    };
-
-    let limit = 2048usize;
-    let body = request.into_body();
-    let bytes = axum::body::to_bytes(body, limit).await.unwrap();
-    let body_str = String::from_utf8(bytes.to_vec()).unwrap();
-    println!("Body: {}", body_str);
-
-    let sdp = match serde_json::from_str::<RTCSessionDescription>(&body_str) {
-        Ok(s) => s,
-        Err(err) => panic!("{}", err),
     };
 
     if let Err(err) = pc.set_remote_description(sdp).await {
