@@ -1,10 +1,9 @@
 mod err;
+mod handshake;
 
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use axum::routing::post;
-use axum::Router;
 use clap::Parser;
 use dotenvy::dotenv;
 use err::PhonexError;
@@ -83,22 +82,6 @@ async fn signal_candidate(addr: &str, c: &RTCIceCandidate) -> Result<(), SpanErr
     Ok(())
 }
 
-async fn candidate(request: axum::http::Request<axum::body::Body>) -> () {
-    let limit = 2048usize;
-    let body = request.into_body();
-    let bytes = axum::body::to_bytes(body, limit).await.unwrap();
-    let body_str = String::from_utf8(bytes.to_vec()).unwrap();
-    println!("Body: {}", body_str);
-}
-
-async fn sdp(request: axum::http::Request<axum::body::Body>) -> () {
-    let limit = 2048usize;
-    let body = request.into_body();
-    let bytes = axum::body::to_bytes(body, limit).await.unwrap();
-    let body_str = String::from_utf8(bytes.to_vec()).unwrap();
-    println!("Body: {}", body_str);
-}
-
 #[tokio::main]
 #[instrument(skip_all, name = "main", level = "trace")]
 async fn main() -> Result<(), SpanErr<PhonexError>> {
@@ -160,22 +143,14 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
         })
     }));
 
-    println!("Listening on http:/answer_address");
+    println!("Listening on http://answer_address");
     {
         let mut pcm = PEER_CONNECTION_MUTEX.lock().unwrap();
         *pcm = Some(Arc::clone(&peer_connection));
     }
 
-    tokio::spawn(async move {
-        let app = Router::new()
-            .route("/candidate", post(candidate))
-            .route("/users", post(sdp));
-
-        let listener = tokio::net::TcpListener::bind(args.answer_address)
-            .await
-            .unwrap();
-
-        axum::serve(listener, app).await.unwrap();
+    tokio::spawn(async {
+        handshake::serve(args.answer_address).await;
     });
 
     let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
