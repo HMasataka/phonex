@@ -1,7 +1,7 @@
 mod err;
 mod handshake;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use anyhow::Result;
 use clap::Parser;
@@ -21,15 +21,13 @@ use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
+use webrtc::peer_connection::math_rand_alpha;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
-use webrtc::peer_connection::{math_rand_alpha, RTCPeerConnection};
 
 #[macro_use]
 extern crate lazy_static;
 
-lazy_static! {
-    static ref PENDING_CANDIDATES: Arc<Mutex<Vec<RTCIceCandidate>>> = Arc::new(Mutex::new(vec![]));
-}
+lazy_static! {}
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -61,20 +59,6 @@ fn initialize_tracing_subscriber() -> Result<(), SpanErr<PhonexError>> {
         .with(ErrorLayer::default())
         .try_init()
         .map_err(PhonexError::InitializeTracingSubscriber)?;
-
-    Ok(())
-}
-
-#[instrument(skip_all, name = "signal_candidate", level = "trace")]
-async fn signal_candidate(addr: &str, c: &RTCIceCandidate) -> Result<(), SpanErr<PhonexError>> {
-    let payload = c.to_json().unwrap().candidate;
-
-    let _resp = reqwest::Client::new()
-        .post(format!("http://{addr}/candidate"))
-        .json(&payload)
-        .send()
-        .await
-        .unwrap();
 
     Ok(())
 }
@@ -112,7 +96,7 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
 
     let peer_connection = Arc::new(api.new_peer_connection(config).await.unwrap());
     let pc = Arc::downgrade(&peer_connection);
-    let pending_candidates = Arc::clone(&PENDING_CANDIDATES);
+    let pending_candidates = Arc::clone(&handshake::PENDING_CANDIDATES);
 
     let offer_address = args.offer_address.clone();
 
@@ -127,7 +111,7 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
                     if desc.is_none() {
                         let mut cs = pending_candidates.lock().unwrap();
                         cs.push(c);
-                    } else if let Err(err) = signal_candidate(&addr, &c).await {
+                    } else if let Err(err) = handshake::signal_candidate(&addr, &c).await {
                         panic!("{}", err);
                     }
                 }
@@ -135,13 +119,9 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
         })
     }));
 
-    {
-        let mut pcm = handshake::PEER_CONNECTION_MUTEX.lock().unwrap();
-        *pcm = Some(Arc::clone(&peer_connection));
-    }
-
+    let pc = Arc::clone(&peer_connection);
     tokio::spawn(async move {
-        handshake::serve(args.offer_address, args.answer_address).await;
+        handshake::serve(args.offer_address, args.answer_address, &pc).await;
     });
 
     let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
