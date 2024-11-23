@@ -1,7 +1,8 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use axum::{routing::post, Json, Router};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 use tracing::instrument;
 use tracing_spanned::SpanErr;
 use webrtc::{
@@ -40,7 +41,7 @@ pub async fn signal_candidate(addr: &str, c: &RTCIceCandidate) -> Result<(), Spa
 
 async fn candidate(Json(req): Json<CandidateRequest>) -> () {
     let pc = {
-        let pcm = PEER_CONNECTION_MUTEX.lock().unwrap();
+        let pcm = PEER_CONNECTION_MUTEX.lock().await;
         pcm.clone().unwrap()
     };
 
@@ -59,11 +60,11 @@ async fn candidate(Json(req): Json<CandidateRequest>) -> () {
 
 async fn sdp(Json(sdp): Json<RTCSessionDescription>) {
     let pc = {
-        let pcm = PEER_CONNECTION_MUTEX.lock().unwrap();
+        let pcm = PEER_CONNECTION_MUTEX.lock().await;
         pcm.clone().unwrap()
     };
     let addr = {
-        let addr = ADDRESS.lock().unwrap();
+        let addr = ADDRESS.lock().await;
         addr.clone()
     };
 
@@ -95,7 +96,7 @@ async fn sdp(Json(sdp): Json<RTCSessionDescription>) {
         panic!("{}", err);
     }
 
-    let cs = PENDING_CANDIDATES.lock().unwrap();
+    let cs = PENDING_CANDIDATES.lock().await;
     for c in &*cs {
         if let Err(err) = signal_candidate(&addr, c).await {
             panic!("{}", err);
@@ -109,13 +110,13 @@ pub async fn serve(
     peer_connection: &Arc<RTCPeerConnection>,
 ) {
     {
-        let mut oa = ADDRESS.lock().unwrap();
+        let mut oa = ADDRESS.lock().await;
         oa.clone_from(&offer_address);
     }
 
     println!("Listening on http://{answer_address}");
     {
-        let mut pcm = PEER_CONNECTION_MUTEX.lock().unwrap();
+        let mut pcm = PEER_CONNECTION_MUTEX.lock().await;
         *pcm = Some(Arc::clone(peer_connection));
     }
 

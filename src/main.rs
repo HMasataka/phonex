@@ -109,7 +109,7 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
                 if let Some(pc) = pc.upgrade() {
                     let desc = pc.remote_description().await;
                     if desc.is_none() {
-                        let mut cs = pending_candidates.lock().unwrap();
+                        let mut cs = pending_candidates.lock().await;
                         cs.push(c);
                     } else if let Err(err) = handshake::signal_candidate(&addr, &c).await {
                         panic!("{}", err);
