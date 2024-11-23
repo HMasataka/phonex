@@ -1637,6 +1637,8 @@ dependencies = [
  "dotenvy",
  "lazy_static",
  "reqwest",
+ "serde",
+ "serde_json",
  "thiserror",
  "tokio",
  "tracing",

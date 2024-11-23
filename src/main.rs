@@ -28,10 +28,7 @@ use webrtc::peer_connection::{math_rand_alpha, RTCPeerConnection};
 extern crate lazy_static;
 
 lazy_static! {
-    static ref PEER_CONNECTION_MUTEX: Arc<Mutex<Option<Arc<RTCPeerConnection>>>> =
-        Arc::new(Mutex::new(None));
     static ref PENDING_CANDIDATES: Arc<Mutex<Vec<RTCIceCandidate>>> = Arc::new(Mutex::new(vec![]));
-    static ref ADDRESS: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
 }
 
 #[derive(Parser, Debug)]
@@ -93,11 +90,6 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
 
     println!("{:?}", args);
 
-    {
-        let mut oa = ADDRESS.lock().unwrap();
-        oa.clone_from(&args.offer_address);
-    }
-
     let config = RTCConfiguration {
         ice_servers: vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -143,14 +135,13 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
         })
     }));
 
-    println!("Listening on http://answer_address");
     {
-        let mut pcm = PEER_CONNECTION_MUTEX.lock().unwrap();
+        let mut pcm = handshake::PEER_CONNECTION_MUTEX.lock().unwrap();
         *pcm = Some(Arc::clone(&peer_connection));
     }
 
-    tokio::spawn(async {
-        handshake::serve(args.answer_address).await;
+    tokio::spawn(async move {
+        handshake::serve(args.offer_address, args.answer_address).await;
     });
 
     let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
