@@ -1,22 +1,57 @@
 mod err;
 
+use std::sync::{Arc, Mutex};
+
+use anyhow::Result;
+use axum::routing::post;
+use axum::Router;
 use clap::Parser;
 use dotenvy::dotenv;
 use err::PhonexError;
+use tokio::time::Duration;
 use tracing::instrument;
 use tracing_error::ErrorLayer;
 use tracing_spanned::SpanErr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
+use webrtc::api::interceptor_registry::register_default_interceptors;
+use webrtc::api::media_engine::MediaEngine;
+use webrtc::api::APIBuilder;
+use webrtc::data_channel::data_channel_message::DataChannelMessage;
+use webrtc::data_channel::RTCDataChannel;
+use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
+use webrtc::ice_transport::ice_server::RTCIceServer;
+use webrtc::interceptor::registry::Registry;
+use webrtc::peer_connection::configuration::RTCConfiguration;
+use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
+use webrtc::peer_connection::{math_rand_alpha, RTCPeerConnection};
+
+#[macro_use]
+extern crate lazy_static;
+
+lazy_static! {
+    static ref PEER_CONNECTION_MUTEX: Arc<Mutex<Option<Arc<RTCPeerConnection>>>> =
+        Arc::new(Mutex::new(None));
+    static ref PENDING_CANDIDATES: Arc<Mutex<Vec<RTCIceCandidate>>> = Arc::new(Mutex::new(vec![]));
+    static ref ADDRESS: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+}
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    #[clap(short = 'p', long = "port", env, default_value = "3000")]
-    port: u16,
-    #[clap(short = 'c', long = "cert", env)]
-    cert_path: String,
-    #[clap(short = 'k', long = "private", env)]
-    private_key_path: String,
+    #[clap(
+        short = 'o',
+        long = "offer_address",
+        env,
+        default_value = "localhost:50000"
+    )]
+    offer_address: String,
+    #[clap(
+        short = 'a',
+        long = "answer_address",
+        env,
+        default_value = "0.0.0.0:60000"
+    )]
+    answer_address: String,
 }
 
 #[instrument(skip_all, name = "initialize_tracing_subscriber", level = "trace")]
@@ -34,8 +69,39 @@ fn initialize_tracing_subscriber() -> Result<(), SpanErr<PhonexError>> {
     Ok(())
 }
 
+#[instrument(skip_all, name = "signal_candidate", level = "trace")]
+async fn signal_candidate(addr: &str, c: &RTCIceCandidate) -> Result<(), SpanErr<PhonexError>> {
+    let payload = c.to_json().unwrap().candidate;
+
+    let _resp = reqwest::Client::new()
+        .post(format!("http://{addr}/candidate"))
+        .json(&payload)
+        .send()
+        .await
+        .unwrap();
+
+    Ok(())
+}
+
+async fn candidate(request: axum::http::Request<axum::body::Body>) -> () {
+    let limit = 2048usize;
+    let body = request.into_body();
+    let bytes = axum::body::to_bytes(body, limit).await.unwrap();
+    let body_str = String::from_utf8(bytes.to_vec()).unwrap();
+    println!("Body: {}", body_str);
+}
+
+async fn sdp(request: axum::http::Request<axum::body::Body>) -> () {
+    let limit = 2048usize;
+    let body = request.into_body();
+    let bytes = axum::body::to_bytes(body, limit).await.unwrap();
+    let body_str = String::from_utf8(bytes.to_vec()).unwrap();
+    println!("Body: {}", body_str);
+}
+
+#[tokio::main]
 #[instrument(skip_all, name = "main", level = "trace")]
-fn main() -> Result<(), SpanErr<PhonexError>> {
+async fn main() -> Result<(), SpanErr<PhonexError>> {
     initialize_tracing_subscriber()?;
 
     let _ = dotenv();
@@ -43,6 +109,143 @@ fn main() -> Result<(), SpanErr<PhonexError>> {
     let args = Args::parse();
 
     println!("{:?}", args);
+
+    {
+        let mut oa = ADDRESS.lock().unwrap();
+        oa.clone_from(&args.offer_address);
+    }
+
+    let config = RTCConfiguration {
+        ice_servers: vec![RTCIceServer {
+            urls: vec!["stun:stun.l.google.com:19302".to_owned()],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    let mut m = MediaEngine::default();
+    m.register_default_codecs().unwrap();
+
+    let mut registry = Registry::new();
+
+    registry = register_default_interceptors(registry, &mut m).unwrap();
+
+    let api = APIBuilder::new()
+        .with_media_engine(m)
+        .with_interceptor_registry(registry)
+        .build();
+
+    let peer_connection = Arc::new(api.new_peer_connection(config).await.unwrap());
+    let pc = Arc::downgrade(&peer_connection);
+    let pending_candidates = Arc::clone(&PENDING_CANDIDATES);
+
+    let offer_address = args.offer_address.clone();
+
+    peer_connection.on_ice_candidate(Box::new(move |c: Option<RTCIceCandidate>| {
+        let pc = pc.clone();
+        let pending_candidates = Arc::clone(&pending_candidates);
+        let addr = offer_address.clone();
+        Box::pin(async move {
+            if let Some(c) = c {
+                if let Some(pc) = pc.upgrade() {
+                    let desc = pc.remote_description().await;
+                    if desc.is_none() {
+                        let mut cs = pending_candidates.lock().unwrap();
+                        cs.push(c);
+                    } else if let Err(err) = signal_candidate(&addr, &c).await {
+                        panic!("{}", err);
+                    }
+                }
+            }
+        })
+    }));
+
+    println!("Listening on http:/answer_address");
+    {
+        let mut pcm = PEER_CONNECTION_MUTEX.lock().unwrap();
+        *pcm = Some(Arc::clone(&peer_connection));
+    }
+
+    tokio::spawn(async move {
+        let app = Router::new()
+            .route("/candidate", post(candidate))
+            .route("/users", post(sdp));
+
+        let listener = tokio::net::TcpListener::bind(args.answer_address)
+            .await
+            .unwrap();
+
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
+
+    // Set the handler for Peer connection state
+    // This will notify you when the peer has connected/disconnected
+    peer_connection.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
+        println!("Peer Connection State has changed: {s}");
+
+        if s == RTCPeerConnectionState::Failed {
+            // Wait until PeerConnection has had no network activity for 30 seconds or another failure. It may be reconnected using an ICE Restart.
+            // Use webrtc.PeerConnectionStateDisconnected if you are interested in detecting faster timeout.
+            // Note that the PeerConnection may come back from PeerConnectionStateDisconnected.
+            println!("Peer Connection has gone to failed exiting");
+            let _ = done_tx.try_send(());
+        }
+
+        Box::pin(async {})
+    }));
+
+    // Register data channel creation handling
+    peer_connection.on_data_channel(Box::new(move |d: Arc<RTCDataChannel>| {
+        let d_label = d.label().to_owned();
+        let d_id = d.id();
+        println!("New DataChannel {d_label} {d_id}");
+
+        Box::pin(async move{
+            // Register channel opening handling
+            let d2 =  Arc::clone(&d);
+            let d_label2 = d_label.clone();
+            let d_id2 = d_id;
+            d.on_open(Box::new(move || {
+                println!("Data channel '{d_label2}'-'{d_id2}' open. Random messages will now be sent to any connected DataChannels every 5 seconds");
+                Box::pin(async move {
+                    let mut result = Result::<usize>::Ok(0);
+                    while result.is_ok() {
+                        let timeout = tokio::time::sleep(Duration::from_secs(5));
+                        tokio::pin!(timeout);
+
+                        tokio::select! {
+                            _ = timeout.as_mut() =>{
+                                let message = math_rand_alpha(15);
+                                println!("Sending '{message}'");
+                                result = d2.send_text(message).await.map_err(Into::into);
+                            }
+                        };
+                    }
+                })
+            }));
+
+            // Register text message handling
+            d.on_message(Box::new(move |msg: DataChannelMessage| {
+               let msg_str = String::from_utf8(msg.data.to_vec()).unwrap();
+               println!("Message from DataChannel '{d_label}': '{msg_str}'");
+               Box::pin(async{})
+           }));
+        })
+    }));
+
+    println!("Press ctrl-c to stop");
+    tokio::select! {
+        _ = done_rx.recv() => {
+            println!("received done signal!");
+        }
+        _ = tokio::signal::ctrl_c() => {
+            println!();
+        }
+    };
+
+    peer_connection.close().await.unwrap();
 
     Ok(())
 }
