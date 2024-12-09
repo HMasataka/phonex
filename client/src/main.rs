@@ -145,6 +145,11 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
         .await
         .unwrap();
 
+    let pc = Arc::clone(&peer_connection);
+    tokio::spawn(async move {
+        handshake::serve(args.offer_address, &pc).await;
+    });
+
     let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
 
     // Set the handler for Peer connection state
@@ -187,7 +192,6 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
         })
     }));
 
-    // Register text message handling
     let d_label = data_channel.label().to_owned();
     data_channel.on_message(Box::new(move |msg: DataChannelMessage| {
         let msg_str = String::from_utf8(msg.data.to_vec()).unwrap();
