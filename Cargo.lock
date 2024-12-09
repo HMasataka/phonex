@@ -462,6 +462,22 @@ checksum = "afb84c814227b90d6895e01398aee0d8033c00e7466aca416fb6a8e0eb19d8a7"
 [[package]]
 name = "client"
 version = "0.1.0"
+dependencies = [
+ "axum",
+ "clap",
+ "dotenvy",
+ "lazy_static",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-error",
+ "tracing-subscriber",
+ "tracing_spanned",
+ "webrtc",
+]
 
 [[package]]
 name = "colorchoice"
