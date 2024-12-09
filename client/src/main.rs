@@ -40,7 +40,7 @@ struct Args {
         short = 'o',
         long = "offer_address",
         env,
-        default_value = "localhost:50000"
+        default_value = "0.0.0.0:50000"
     )]
     offer_address: String,
     #[clap(
@@ -201,25 +201,19 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
 
     // Create an offer to send to the other process
     let offer = peer_connection.create_offer(None).await.unwrap();
+    let offer2 = offer.clone();
 
-    // Send our offer to the HTTP server listening in the other process
-    let payload = match serde_json::to_string(&offer) {
-        Ok(p) => p,
-        Err(err) => panic!("{}", err),
-    };
-
-    // Sets the LocalDescription, and starts our UDP listeners
-    // Note: this will start the gathering of ICE candidates
     peer_connection.set_local_description(offer).await.unwrap();
 
     let addr = args.answer_address;
 
-    let _resp = reqwest::Client::new()
+    let resp = reqwest::Client::new()
         .post(format!("http://{addr}/sdp"))
-        .json(&payload)
+        .json(&offer2)
         .send()
         .await
         .unwrap();
+    println!("Response: {}", resp.status());
 
     println!("Press ctrl-c to stop");
     tokio::select! {

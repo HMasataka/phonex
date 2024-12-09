@@ -80,15 +80,9 @@ async fn sdp(Json(req): Json<RTCSessionDescription>) {
         Err(err) => panic!("{}", err),
     };
 
-    // Send our answer to the HTTP server listening in the other process
-    let payload = match serde_json::to_string(&answer) {
-        Ok(p) => p,
-        Err(err) => panic!("{}", err),
-    };
-
     let _resp = reqwest::Client::new()
         .post(format!("http://{addr}/sdp"))
-        .json(&payload)
+        .json(&answer)
         .send()
         .await
         .unwrap();

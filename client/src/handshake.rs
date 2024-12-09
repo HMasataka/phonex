@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use axum::{routing::post, Json, Router};
+use axum::{extract, routing::post, Router};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing::instrument;
@@ -39,7 +39,7 @@ pub async fn signal_candidate(addr: &str, c: &RTCIceCandidate) -> Result<(), Spa
     Ok(())
 }
 
-async fn candidate(Json(req): Json<CandidateRequest>) -> () {
+async fn candidate(extract::Json(req): extract::Json<CandidateRequest>) -> () {
     let pc = {
         let pcm = PEER_CONNECTION_MUTEX.lock().await;
         pcm.clone().unwrap()
@@ -58,7 +58,7 @@ async fn candidate(Json(req): Json<CandidateRequest>) -> () {
     }
 }
 
-async fn sdp(Json(req): Json<RTCSessionDescription>) {
+async fn sdp(extract::Json(req): extract::Json<RTCSessionDescription>) {
     let pc = {
         let pcm = PEER_CONNECTION_MUTEX.lock().await;
         pcm.clone().unwrap()

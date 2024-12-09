@@ -36,7 +36,7 @@ struct Args {
         short = 'o',
         long = "offer_address",
         env,
-        default_value = "localhost:50000"
+        default_value = "0.0.0.0:50000"
     )]
     offer_address: String,
     #[clap(
