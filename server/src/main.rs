@@ -101,6 +101,8 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
     let offer_address = args.offer_address.clone();
 
     peer_connection.on_ice_candidate(Box::new(move |c: Option<RTCIceCandidate>| {
+        println!("on ice candidate: {:?}", c);
+
         let pc = pc.clone();
         let pending_candidates = Arc::clone(&pending_candidates);
         let addr = offer_address.clone();

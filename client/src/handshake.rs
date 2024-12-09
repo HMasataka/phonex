@@ -27,14 +27,17 @@ pub struct CandidateRequest {
 
 #[instrument(skip_all, name = "signal_candidate", level = "trace")]
 pub async fn signal_candidate(addr: &str, c: &RTCIceCandidate) -> Result<(), SpanErr<PhonexError>> {
-    let payload = c.to_json().unwrap().candidate;
+    let candidate = c.to_json().unwrap().candidate;
 
-    let _resp = reqwest::Client::new()
+    let resp = reqwest::Client::new()
         .post(format!("http://{addr}/candidate"))
-        .json(&payload)
+        .json(&CandidateRequest {
+            candidate: candidate,
+        })
         .send()
         .await
         .unwrap();
+    println!("signal_candidate Response: {}", resp.status());
 
     Ok(())
 }

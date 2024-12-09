@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use axum::{routing::post, Json, Router};
+use axum::{extract, routing::post, Router};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing::instrument;
@@ -27,19 +27,22 @@ pub struct CandidateRequest {
 
 #[instrument(skip_all, name = "signal_candidate", level = "trace")]
 pub async fn signal_candidate(addr: &str, c: &RTCIceCandidate) -> Result<(), SpanErr<PhonexError>> {
-    let payload = c.to_json().unwrap().candidate;
+    let candidate = c.to_json().unwrap().candidate;
 
-    let _resp = reqwest::Client::new()
+    let resp = reqwest::Client::new()
         .post(format!("http://{addr}/candidate"))
-        .json(&payload)
+        .json(&CandidateRequest {
+            candidate: candidate,
+        })
         .send()
         .await
         .unwrap();
+    println!("signal_candidate Response: {}", resp.status());
 
     Ok(())
 }
 
-async fn candidate(Json(req): Json<CandidateRequest>) -> () {
+async fn candidate(extract::Json(req): extract::Json<CandidateRequest>) -> () {
     let pc = {
         let pcm = PEER_CONNECTION_MUTEX.lock().await;
         pcm.clone().unwrap()
@@ -58,7 +61,7 @@ async fn candidate(Json(req): Json<CandidateRequest>) -> () {
     }
 }
 
-async fn sdp(Json(req): Json<RTCSessionDescription>) {
+async fn sdp(extract::Json(req): extract::Json<RTCSessionDescription>) {
     let pc = {
         let pcm = PEER_CONNECTION_MUTEX.lock().await;
         pcm.clone().unwrap()
