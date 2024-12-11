@@ -6,5 +6,9 @@ pub enum PhonexError {
     #[error("failed to initialize tracing subscriber. {0}")]
     InitializeTracingSubscriber(TryInitError),
     #[error("failed to send message: {0}")]
-    FailedToSend(webrtc::Error),
+    SendMessage(webrtc::Error),
+    #[error("failed to initialize registry: {0}")]
+    InitializeRegistry(webrtc::Error),
+    #[error("failed to create new peer connection: {0}")]
+    CreateNewPeerConnection(webrtc::Error),
 }

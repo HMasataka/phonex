@@ -67,6 +67,38 @@ fn initialize_tracing_subscriber() -> Result<(), SpanErr<PhonexError>> {
     Ok(())
 }
 
+#[instrument(skip_all, name = "initialize_peer_connection", level = "trace")]
+async fn initialize_peer_connection() -> Result<Arc<RTCPeerConnection>, SpanErr<PhonexError>> {
+    let config = RTCConfiguration {
+        ice_servers: vec![RTCIceServer {
+            urls: vec!["stun:stun.l.google.com:19302".to_owned()],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    let mut m = MediaEngine::default();
+    m.register_default_codecs()
+        .map_err(PhonexError::InitializeRegistry)?;
+
+    let mut registry = Registry::new();
+    registry =
+        register_default_interceptors(registry, &mut m).map_err(PhonexError::InitializeRegistry)?;
+
+    let api = APIBuilder::new()
+        .with_media_engine(m)
+        .with_interceptor_registry(registry)
+        .build();
+
+    let peer_connection = Arc::new(
+        api.new_peer_connection(config)
+            .await
+            .map_err(PhonexError::CreateNewPeerConnection)?,
+    );
+
+    Ok(peer_connection)
+}
+
 #[tokio::main]
 #[instrument(skip_all, name = "main", level = "trace")]
 async fn main() -> Result<(), SpanErr<PhonexError>> {
@@ -83,32 +115,7 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
         oa.clone_from(&args.answer_address);
     }
 
-    // Prepare the configuration
-    let config = RTCConfiguration {
-        ice_servers: vec![RTCIceServer {
-            urls: vec!["stun:stun.l.google.com:19302".to_owned()],
-            ..Default::default()
-        }],
-        ..Default::default()
-    };
-
-    // Create a MediaEngine object to configure the supported codec
-    let mut m = MediaEngine::default();
-    m.register_default_codecs().unwrap();
-
-    let mut registry = Registry::new();
-
-    // Use the default set of Interceptors
-    registry = register_default_interceptors(registry, &mut m).unwrap();
-
-    // Create the API object with the MediaEngine
-    let api = APIBuilder::new()
-        .with_media_engine(m)
-        .with_interceptor_registry(registry)
-        .build();
-
-    // Create a new RTCPeerConnection
-    let peer_connection = Arc::new(api.new_peer_connection(config).await.unwrap());
+    let peer_connection = initialize_peer_connection().await?;
 
     // When an ICE candidate is available send to the other Pion instance
     // the other Pion instance will add this candidate by calling AddICECandidate
@@ -185,7 +192,7 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
                     _ = timeout.as_mut() =>{
                         let message = math_rand_alpha(15);
                         println!("Sending '{message}'");
-                        result = d2.send_text(message).await.map_err(PhonexError::FailedToSend);
+                        result = d2.send_text(message).await.map_err(PhonexError::SendMessage);
                     }
                 };
             }
