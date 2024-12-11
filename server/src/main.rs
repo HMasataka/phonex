@@ -21,8 +21,9 @@ use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
-use webrtc::peer_connection::math_rand_alpha;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
+use webrtc::peer_connection::RTCPeerConnection;
+use webrtc::peer_connection::{self, math_rand_alpha};
 
 #[macro_use]
 extern crate lazy_static;
@@ -63,17 +64,8 @@ fn initialize_tracing_subscriber() -> Result<(), SpanErr<PhonexError>> {
     Ok(())
 }
 
-#[tokio::main]
-#[instrument(skip_all, name = "main", level = "trace")]
-async fn main() -> Result<(), SpanErr<PhonexError>> {
-    initialize_tracing_subscriber()?;
-
-    let _ = dotenv();
-
-    let args = Args::parse();
-
-    println!("{:?}", args);
-
+#[instrument(skip_all, name = "initialize_peer_connection", level = "trace")]
+async fn initialize_peer_connection() -> Result<Arc<RTCPeerConnection>, SpanErr<PhonexError>> {
     let config = RTCConfiguration {
         ice_servers: vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -83,18 +75,38 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
     };
 
     let mut m = MediaEngine::default();
-    m.register_default_codecs().unwrap();
+    m.register_default_codecs()
+        .map_err(PhonexError::InitializeRegistry)?;
 
     let mut registry = Registry::new();
-
-    registry = register_default_interceptors(registry, &mut m).unwrap();
+    registry =
+        register_default_interceptors(registry, &mut m).map_err(PhonexError::InitializeRegistry)?;
 
     let api = APIBuilder::new()
         .with_media_engine(m)
         .with_interceptor_registry(registry)
         .build();
 
-    let peer_connection = Arc::new(api.new_peer_connection(config).await.unwrap());
+    let peer_connection = Arc::new(
+        api.new_peer_connection(config)
+            .await
+            .map_err(PhonexError::CreateNewPeerConnection)?,
+    );
+
+    Ok(peer_connection)
+}
+
+#[tokio::main]
+#[instrument(skip_all, name = "main", level = "trace")]
+async fn main() -> Result<(), SpanErr<PhonexError>> {
+    initialize_tracing_subscriber()?;
+
+    let _ = dotenv();
+    let args = Args::parse();
+    println!("{:?}", args);
+
+    let peer_connection = initialize_peer_connection().await?;
+
     let pc = Arc::downgrade(&peer_connection);
     let pending_candidates = Arc::clone(&handshake::PENDING_CANDIDATES);
 
