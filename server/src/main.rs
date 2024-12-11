@@ -128,15 +128,10 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
 
     let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
 
-    // Set the handler for Peer connection state
-    // This will notify you when the peer has connected/disconnected
     peer_connection.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
         println!("Peer Connection State has changed: {s}");
 
         if s == RTCPeerConnectionState::Failed {
-            // Wait until PeerConnection has had no network activity for 30 seconds or another failure. It may be reconnected using an ICE Restart.
-            // Use webrtc.PeerConnectionStateDisconnected if you are interested in detecting faster timeout.
-            // Note that the PeerConnection may come back from PeerConnectionStateDisconnected.
             println!("Peer Connection has gone to failed exiting");
             let _ = done_tx.try_send(());
         }
@@ -144,14 +139,12 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
         Box::pin(async {})
     }));
 
-    // Register data channel creation handling
     peer_connection.on_data_channel(Box::new(move |d: Arc<RTCDataChannel>| {
         let d_label = d.label().to_owned();
         let d_id = d.id();
         println!("New DataChannel {d_label} {d_id}");
 
         Box::pin(async move{
-            // Register channel opening handling
             let d2 =  Arc::clone(&d);
             let d_label2 = d_label.clone();
             let d_id2 = d_id;
@@ -174,7 +167,6 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
                 })
             }));
 
-            // Register text message handling
             d.on_message(Box::new(move |msg: DataChannelMessage| {
                let msg_str = String::from_utf8(msg.data.to_vec()).unwrap();
                println!("Message from DataChannel '{d_label}': '{msg_str}'");
