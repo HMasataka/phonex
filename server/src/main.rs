@@ -2,6 +2,8 @@ mod err;
 mod handshake;
 
 use std::sync::Arc;
+use std::sync::Weak;
+use tokio::sync::Mutex;
 
 use anyhow::Result;
 use clap::Parser;
@@ -18,12 +20,13 @@ use webrtc::api::APIBuilder;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
+use webrtc::ice_transport::ice_gatherer::OnLocalCandidateHdlrFn;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
+use webrtc::peer_connection::math_rand_alpha;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::RTCPeerConnection;
-use webrtc::peer_connection::{self, math_rand_alpha};
 
 #[macro_use]
 extern crate lazy_static;
@@ -96,6 +99,34 @@ async fn initialize_peer_connection() -> Result<Arc<RTCPeerConnection>, SpanErr<
     Ok(peer_connection)
 }
 
+#[instrument(skip_all, name = "on_ice_candidate", level = "trace")]
+async fn on_ice_candidate(
+    peer_connection: Weak<RTCPeerConnection>,
+    pending_candidates: Arc<Mutex<Vec<RTCIceCandidate>>>,
+    offer_address: String,
+) -> Result<OnLocalCandidateHdlrFn, SpanErr<PhonexError>> {
+    Ok(Box::new(move |c: Option<RTCIceCandidate>| {
+        println!("on ice candidate: {:?}", c);
+
+        let pc = peer_connection.clone();
+        let pending_candidates = Arc::clone(&pending_candidates);
+        let addr = offer_address.clone();
+        Box::pin(async move {
+            if let Some(c) = c {
+                if let Some(pc) = pc.upgrade() {
+                    let desc = pc.remote_description().await;
+                    if desc.is_none() {
+                        let mut cs = pending_candidates.lock().await;
+                        cs.push(c);
+                    } else if let Err(err) = handshake::signal_candidate(&addr, &c).await {
+                        panic!("{}", err);
+                    }
+                }
+            }
+        })
+    }))
+}
+
 #[tokio::main]
 #[instrument(skip_all, name = "main", level = "trace")]
 async fn main() -> Result<(), SpanErr<PhonexError>> {
@@ -112,26 +143,8 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
 
     let offer_address = args.offer_address.clone();
 
-    peer_connection.on_ice_candidate(Box::new(move |c: Option<RTCIceCandidate>| {
-        println!("on ice candidate: {:?}", c);
-
-        let pc = pc.clone();
-        let pending_candidates = Arc::clone(&pending_candidates);
-        let addr = offer_address.clone();
-        Box::pin(async move {
-            if let Some(c) = c {
-                if let Some(pc) = pc.upgrade() {
-                    let desc = pc.remote_description().await;
-                    if desc.is_none() {
-                        let mut cs = pending_candidates.lock().await;
-                        cs.push(c);
-                    } else if let Err(err) = handshake::signal_candidate(&addr, &c).await {
-                        panic!("{}", err);
-                    }
-                }
-            }
-        })
-    }));
+    peer_connection
+        .on_ice_candidate(on_ice_candidate(pc, pending_candidates, offer_address).await?);
 
     let pc = Arc::clone(&peer_connection);
     tokio::spawn(async move {
