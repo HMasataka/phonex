@@ -26,6 +26,7 @@ use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::math_rand_alpha;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
+use webrtc::peer_connection::OnDataChannelHdlrFn;
 use webrtc::peer_connection::RTCPeerConnection;
 
 #[macro_use]
@@ -100,7 +101,7 @@ async fn initialize_peer_connection() -> Result<Arc<RTCPeerConnection>, SpanErr<
 }
 
 #[instrument(skip_all, name = "on_ice_candidate", level = "trace")]
-async fn on_ice_candidate(
+fn on_ice_candidate(
     peer_connection: Weak<RTCPeerConnection>,
     pending_candidates: Arc<Mutex<Vec<RTCIceCandidate>>>,
     offer_address: String,
@@ -127,50 +128,15 @@ async fn on_ice_candidate(
     }))
 }
 
-#[tokio::main]
-#[instrument(skip_all, name = "main", level = "trace")]
-async fn main() -> Result<(), SpanErr<PhonexError>> {
-    initialize_tracing_subscriber()?;
-
-    let _ = dotenv();
-    let args = Args::parse();
-    println!("{:?}", args);
-
-    let peer_connection = initialize_peer_connection().await?;
-
-    let pc = Arc::downgrade(&peer_connection);
-    let pending_candidates = Arc::clone(&handshake::PENDING_CANDIDATES);
-
-    let offer_address = args.offer_address.clone();
-
-    peer_connection
-        .on_ice_candidate(on_ice_candidate(pc, pending_candidates, offer_address).await?);
-
-    let pc = Arc::clone(&peer_connection);
-    tokio::spawn(async move {
-        handshake::serve(args.offer_address, args.answer_address, &pc).await;
-    });
-
-    let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
-
-    peer_connection.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
-        println!("Peer Connection State has changed: {s}");
-
-        if s == RTCPeerConnectionState::Failed {
-            println!("Peer Connection has gone to failed exiting");
-            let _ = done_tx.try_send(());
-        }
-
-        Box::pin(async {})
-    }));
-
-    peer_connection.on_data_channel(Box::new(move |d: Arc<RTCDataChannel>| {
+#[instrument(skip_all, name = "on_ice_candidate", level = "trace")]
+fn on_data_channel() -> Result<OnDataChannelHdlrFn, SpanErr<PhonexError>> {
+    Ok(Box::new(move |d: Arc<RTCDataChannel>| {
         let d_label = d.label().to_owned();
         let d_id = d.id();
         println!("New DataChannel {d_label} {d_id}");
 
-        Box::pin(async move{
-            let d2 =  Arc::clone(&d);
+        Box::pin(async move {
+            let d2 = Arc::clone(&d);
             let d_label2 = d_label.clone();
             let d_id2 = d_id;
             d.on_open(Box::new(move || {
@@ -193,12 +159,51 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
             }));
 
             d.on_message(Box::new(move |msg: DataChannelMessage| {
-               let msg_str = String::from_utf8(msg.data.to_vec()).unwrap();
-               println!("Message from DataChannel '{d_label}': '{msg_str}'");
-               Box::pin(async{})
-           }));
+                let msg_str = String::from_utf8(msg.data.to_vec()).unwrap();
+                println!("Message from DataChannel '{d_label}': '{msg_str}'");
+                Box::pin(async {})
+            }));
         })
+    }))
+}
+
+#[tokio::main]
+#[instrument(skip_all, name = "main", level = "trace")]
+async fn main() -> Result<(), SpanErr<PhonexError>> {
+    initialize_tracing_subscriber()?;
+
+    let _ = dotenv();
+    let args = Args::parse();
+    println!("{:?}", args);
+
+    let peer_connection = initialize_peer_connection().await?;
+
+    let pc = Arc::downgrade(&peer_connection);
+    let pending_candidates = Arc::clone(&handshake::PENDING_CANDIDATES);
+
+    let offer_address = args.offer_address.clone();
+
+    peer_connection.on_ice_candidate(on_ice_candidate(pc, pending_candidates, offer_address)?);
+
+    let pc = Arc::clone(&peer_connection);
+    tokio::spawn(async move {
+        handshake::serve(args.offer_address, args.answer_address, &pc).await;
+    });
+
+    let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
+
+    peer_connection.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
+        println!("Peer Connection State has changed: {s}");
+
+        if s == RTCPeerConnectionState::Failed {
+            println!("Peer Connection has gone to failed exiting");
+            let _ = done_tx.try_send(());
+        }
+
+        Box::pin(async {})
     }));
+
+    peer_connection.on_data_channel(on_data_channel()?);
 
     println!("Press ctrl-c to stop");
     tokio::select! {
