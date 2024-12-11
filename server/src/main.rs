@@ -196,12 +196,11 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
 
     let peer_connection = initialize_peer_connection().await?;
 
-    let pc = Arc::downgrade(&peer_connection);
-    let pending_candidates = Arc::clone(&handshake::PENDING_CANDIDATES);
-
-    let offer_address = args.offer_address.clone();
-
-    peer_connection.on_ice_candidate(on_ice_candidate(pc, pending_candidates, offer_address)?);
+    peer_connection.on_ice_candidate(on_ice_candidate(
+        Arc::downgrade(&peer_connection),
+        Arc::clone(&handshake::PENDING_CANDIDATES),
+        args.offer_address.clone(),
+    )?);
 
     let pc = Arc::clone(&peer_connection);
     tokio::spawn(async move {
