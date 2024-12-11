@@ -3,6 +3,7 @@ mod handshake;
 
 use std::sync::Arc;
 use std::sync::Weak;
+use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
 
 use anyhow::Result;
@@ -27,6 +28,7 @@ use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::math_rand_alpha;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::OnDataChannelHdlrFn;
+use webrtc::peer_connection::OnPeerConnectionStateChangeHdlrFn;
 use webrtc::peer_connection::RTCPeerConnection;
 
 #[macro_use]
@@ -167,6 +169,22 @@ fn on_data_channel() -> Result<OnDataChannelHdlrFn, SpanErr<PhonexError>> {
     }))
 }
 
+#[instrument(skip_all, name = "on_peer_connection_state_change", level = "trace")]
+fn on_peer_connection_state_change(
+    done_tx: Sender<()>,
+) -> Result<OnPeerConnectionStateChangeHdlrFn, SpanErr<PhonexError>> {
+    Ok(Box::new(move |s: RTCPeerConnectionState| {
+        println!("Peer Connection State has changed: {s}");
+
+        if s == RTCPeerConnectionState::Failed {
+            println!("Peer Connection has gone to failed exiting");
+            let _ = done_tx.try_send(());
+        }
+
+        Box::pin(async {})
+    }))
+}
+
 #[tokio::main]
 #[instrument(skip_all, name = "main", level = "trace")]
 async fn main() -> Result<(), SpanErr<PhonexError>> {
@@ -192,16 +210,7 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
 
     let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
 
-    peer_connection.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
-        println!("Peer Connection State has changed: {s}");
-
-        if s == RTCPeerConnectionState::Failed {
-            println!("Peer Connection has gone to failed exiting");
-            let _ = done_tx.try_send(());
-        }
-
-        Box::pin(async {})
-    }));
+    peer_connection.on_peer_connection_state_change(on_peer_connection_state_change(done_tx)?);
 
     peer_connection.on_data_channel(on_data_channel()?);
 
