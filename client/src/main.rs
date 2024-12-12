@@ -2,10 +2,13 @@ mod err;
 mod handshake;
 
 use std::sync::Arc;
+use std::sync::Weak;
 
+use anyhow::Result;
 use clap::Parser;
 use dotenvy::dotenv;
 use err::PhonexError;
+use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
 use tracing::instrument;
@@ -16,11 +19,15 @@ use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
+use webrtc::data_channel::OnOpenHdlrFn;
+use webrtc::data_channel::RTCDataChannel;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
+use webrtc::ice_transport::ice_gatherer::OnLocalCandidateHdlrFn;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
+use webrtc::peer_connection::OnPeerConnectionStateChangeHdlrFn;
 use webrtc::peer_connection::{math_rand_alpha, RTCPeerConnection};
 
 #[macro_use]
@@ -99,6 +106,75 @@ async fn initialize_peer_connection() -> Result<Arc<RTCPeerConnection>, SpanErr<
     Ok(peer_connection)
 }
 
+#[instrument(skip_all, name = "on_ice_candidate", level = "trace")]
+fn on_ice_candidate(
+    peer_connection: Weak<RTCPeerConnection>,
+    pending_candidates: Arc<Mutex<Vec<RTCIceCandidate>>>,
+    answer_address: String,
+) -> Result<OnLocalCandidateHdlrFn, SpanErr<PhonexError>> {
+    Ok(Box::new(move |c: Option<RTCIceCandidate>| {
+        println!("on ice candidate: {:?}", c);
+
+        let pc = peer_connection.clone();
+        let pending_candidates = Arc::clone(&pending_candidates);
+        let addr = answer_address.clone();
+        Box::pin(async move {
+            if let Some(c) = c {
+                if let Some(pc) = pc.upgrade() {
+                    let desc = pc.remote_description().await;
+                    if desc.is_none() {
+                        let mut cs = pending_candidates.lock().await;
+                        cs.push(c);
+                    } else if let Err(err) = handshake::signal_candidate(&addr, &c).await {
+                        panic!("{}", err);
+                    }
+                }
+            }
+        })
+    }))
+}
+
+#[instrument(skip_all, name = "on_peer_connection_state_change", level = "trace")]
+fn on_peer_connection_state_change(
+    done_tx: Sender<()>,
+) -> Result<OnPeerConnectionStateChangeHdlrFn, SpanErr<PhonexError>> {
+    Ok(Box::new(move |s: RTCPeerConnectionState| {
+        println!("Peer Connection State has changed: {s}");
+
+        if s == RTCPeerConnectionState::Failed {
+            println!("Peer Connection has gone to failed exiting");
+            let _ = done_tx.try_send(());
+        }
+
+        Box::pin(async {})
+    }))
+}
+
+#[instrument(skip_all, name = "on_ice_candidate", level = "trace")]
+fn on_open(data_channel: Arc<RTCDataChannel>) -> Result<OnOpenHdlrFn, SpanErr<PhonexError>> {
+    Ok(Box::new(move || {
+        println!("Data channel '{}'-'{}' open. Random messages will now be sent to any connected DataChannels every 5 seconds", data_channel.label(), data_channel.id());
+
+        let dc = Arc::clone(&data_channel);
+        Box::pin(async move {
+            let mut result = Result::<usize, PhonexError>::Ok(0);
+
+            while result.is_ok() {
+                let timeout = tokio::time::sleep(Duration::from_secs(5));
+                tokio::pin!(timeout);
+
+                tokio::select! {
+                    _ = timeout.as_mut() =>{
+                        let message = math_rand_alpha(15);
+                        println!("Sending '{message}'");
+                        result = dc.send_text(message).await.map_err(PhonexError::SendMessage);
+                    }
+                };
+            }
+        })
+    }))
+}
+
 #[tokio::main]
 #[instrument(skip_all, name = "main", level = "trace")]
 async fn main() -> Result<(), SpanErr<PhonexError>> {
@@ -117,36 +193,17 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
 
     let peer_connection = initialize_peer_connection().await?;
 
-    // When an ICE candidate is available send to the other Pion instance
-    // the other Pion instance will add this candidate by calling AddICECandidate
-    let pc = Arc::downgrade(&peer_connection);
-    let pending_candidates2 = Arc::clone(&PENDING_CANDIDATES);
-    let addr2 = args.answer_address.clone();
-    peer_connection.on_ice_candidate(Box::new(move |c: Option<RTCIceCandidate>| {
-        let pc2 = pc.clone();
-        let pending_candidates3 = Arc::clone(&pending_candidates2);
-        let addr3 = addr2.clone();
-        Box::pin(async move {
-            if let Some(c) = c {
-                if let Some(pc) = pc2.upgrade() {
-                    let desc = pc.remote_description().await;
-                    if desc.is_none() {
-                        let mut cs = pending_candidates3.lock().await;
-                        cs.push(c);
-                    } else if let Err(err) = handshake::signal_candidate(&addr3, &c).await {
-                        panic!("{}", err);
-                    }
-                }
-            }
-        })
-    }));
+    peer_connection.on_ice_candidate(on_ice_candidate(
+        Arc::downgrade(&peer_connection),
+        Arc::clone(&handshake::PENDING_CANDIDATES),
+        args.answer_address.clone(),
+    )?);
 
     {
         let mut pcm = PEER_CONNECTION_MUTEX.lock().await;
         *pcm = Some(Arc::clone(&peer_connection));
     }
 
-    // Create a datachannel with label 'data'
     let data_channel = peer_connection
         .create_data_channel("data", None)
         .await
@@ -159,45 +216,9 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
 
     let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
 
-    // Set the handler for Peer connection state
-    // This will notify you when the peer has connected/disconnected
-    peer_connection.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
-        println!("Peer Connection State has changed: {s}");
+    peer_connection.on_peer_connection_state_change(on_peer_connection_state_change(done_tx)?);
 
-        if s == RTCPeerConnectionState::Failed {
-            // Wait until PeerConnection has had no network activity for 30 seconds or another failure. It may be reconnected using an ICE Restart.
-            // Use webrtc.PeerConnectionStateDisconnected if you are interested in detecting faster timeout.
-            // Note that the PeerConnection may come back from PeerConnectionStateDisconnected.
-            println!("Peer Connection has gone to failed exiting");
-            let _ = done_tx.try_send(());
-        }
-
-        Box::pin(async {})
-    }));
-
-    // Register channel opening handling
-    let d1 = Arc::clone(&data_channel);
-    data_channel.on_open(Box::new(move || {
-        println!("Data channel '{}'-'{}' open. Random messages will now be sent to any connected DataChannels every 5 seconds", d1.label(), d1.id());
-
-        let d2 = Arc::clone(&d1);
-        Box::pin(async move {
-            let mut result = Result::<usize,PhonexError>::Ok(0);
-
-            while result.is_ok() {
-                let timeout = tokio::time::sleep(Duration::from_secs(5));
-                tokio::pin!(timeout);
-
-                tokio::select! {
-                    _ = timeout.as_mut() =>{
-                        let message = math_rand_alpha(15);
-                        println!("Sending '{message}'");
-                        result = d2.send_text(message).await.map_err(PhonexError::SendMessage);
-                    }
-                };
-            }
-        })
-    }));
+    data_channel.on_open(on_open(Arc::clone(&data_channel))?);
 
     let d_label = data_channel.label().to_owned();
     data_channel.on_message(Box::new(move |msg: DataChannelMessage| {
