@@ -1,5 +1,8 @@
 use std::string::FromUtf8Error;
 
+use axum::response::{IntoResponse, Response};
+use reqwest::StatusCode;
+
 use thiserror::Error;
 use tracing_subscriber::util::TryInitError;
 
@@ -23,8 +26,22 @@ pub enum PhonexError {
     CreateNewDataChannel(webrtc::Error),
     #[error("failed to create new offer: {0}")]
     CreateNewOffer(webrtc::Error),
+    #[error("failed to set remote description: {0}")]
+    SetRemoteDescription(webrtc::Error),
     #[error("failed to set local description: {0}")]
     SetLocalDescription(webrtc::Error),
     #[error("failed to convert to string: {0}")]
     ConvertByteToString(FromUtf8Error),
+    #[error("failed to add ice candidate: {0}")]
+    AddIceCandidate(webrtc::Error),
+}
+
+impl IntoResponse for PhonexError {
+    fn into_response(self) -> Response {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Something went wrong: {}", self),
+        )
+            .into_response()
+    }
 }

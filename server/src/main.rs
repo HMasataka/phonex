@@ -214,7 +214,6 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
     let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
 
     peer_connection.on_peer_connection_state_change(on_peer_connection_state_change(done_tx)?);
-
     peer_connection.on_data_channel(on_data_channel()?);
 
     println!("Press ctrl-c to stop");

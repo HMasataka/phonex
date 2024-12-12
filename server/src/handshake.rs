@@ -27,12 +27,12 @@ pub struct CandidateRequest {
 
 #[instrument(skip_all, name = "signal_candidate", level = "trace")]
 pub async fn signal_candidate(addr: &str, c: &RTCIceCandidate) -> Result<(), SpanErr<PhonexError>> {
-    let candidate = c.to_json().unwrap().candidate;
+    let req = c.to_json().unwrap();
 
     let resp = reqwest::Client::new()
         .post(format!("http://{addr}/candidate"))
         .json(&CandidateRequest {
-            candidate: candidate,
+            candidate: req.candidate,
         })
         .send()
         .await
@@ -42,7 +42,7 @@ pub async fn signal_candidate(addr: &str, c: &RTCIceCandidate) -> Result<(), Spa
     Ok(())
 }
 
-async fn candidate(extract::Json(req): extract::Json<CandidateRequest>) -> () {
+async fn candidate(extract::Json(req): extract::Json<CandidateRequest>) -> Result<(), PhonexError> {
     let pc = {
         let pcm = PEER_CONNECTION_MUTEX.lock().await;
         pcm.clone().unwrap()
@@ -50,18 +50,17 @@ async fn candidate(extract::Json(req): extract::Json<CandidateRequest>) -> () {
 
     println!("Req: {:?}", req);
 
-    if let Err(err) = pc
-        .add_ice_candidate(RTCIceCandidateInit {
-            candidate: req.candidate,
-            ..Default::default()
-        })
-        .await
-    {
-        panic!("{}", err);
-    }
+    pc.add_ice_candidate(RTCIceCandidateInit {
+        candidate: req.candidate,
+        ..Default::default()
+    })
+    .await
+    .map_err(PhonexError::AddIceCandidate)?;
+
+    Ok(())
 }
 
-async fn sdp(extract::Json(req): extract::Json<RTCSessionDescription>) {
+async fn sdp(extract::Json(req): extract::Json<RTCSessionDescription>) -> Result<(), PhonexError> {
     let pc = {
         let pcm = PEER_CONNECTION_MUTEX.lock().await;
         pcm.clone().unwrap()
@@ -73,35 +72,33 @@ async fn sdp(extract::Json(req): extract::Json<RTCSessionDescription>) {
 
     println!("Req: {:?}", req);
 
-    if let Err(err) = pc.set_remote_description(req).await {
-        panic!("{}", err);
-    }
+    pc.set_remote_description(req)
+        .await
+        .map_err(PhonexError::SetRemoteDescription)?;
 
     // Create an answer to send to the other process
-    let answer = match pc.create_answer(None).await {
-        Ok(a) => a,
-        Err(err) => panic!("{}", err),
-    };
+    let answer = pc
+        .create_answer(None)
+        .await
+        .map_err(PhonexError::CreateNewAnswer)?;
 
     let _resp = reqwest::Client::new()
         .post(format!("http://{addr}/sdp"))
         .json(&answer)
         .send()
         .await
-        .map_err(PhonexError::SendHTTPRequest)
-        .unwrap();
+        .map_err(PhonexError::SendHTTPRequest)?;
 
-    // Sets the LocalDescription, and starts our UDP listeners
-    if let Err(err) = pc.set_local_description(answer).await {
-        panic!("{}", err);
-    }
+    pc.set_local_description(answer)
+        .await
+        .map_err(PhonexError::SetLocalDescription)?;
 
     let cs = PENDING_CANDIDATES.lock().await;
     for c in &*cs {
-        if let Err(err) = signal_candidate(&addr, c).await {
-            panic!("{}", err);
-        }
+        signal_candidate(&addr, c).await.map_err(|e| e.error)?;
     }
+
+    Ok(())
 }
 
 pub async fn serve(
