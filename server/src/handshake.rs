@@ -36,7 +36,7 @@ pub async fn signal_candidate(addr: &str, c: &RTCIceCandidate) -> Result<(), Spa
         })
         .send()
         .await
-        .unwrap();
+        .map_err(PhonexError::SendHTTPRequest)?;
     println!("signal_candidate Response: {}", resp.status());
 
     Ok(())
@@ -88,6 +88,7 @@ async fn sdp(extract::Json(req): extract::Json<RTCSessionDescription>) {
         .json(&answer)
         .send()
         .await
+        .map_err(PhonexError::SendHTTPRequest)
         .unwrap();
 
     // Sets the LocalDescription, and starts our UDP listeners
@@ -107,7 +108,7 @@ pub async fn serve(
     offer_address: String,
     answer_address: String,
     peer_connection: &Arc<RTCPeerConnection>,
-) {
+) -> Result<(), SpanErr<PhonexError>> {
     {
         let mut oa = ADDRESS.lock().await;
         oa.clone_from(&offer_address);
@@ -123,7 +124,13 @@ pub async fn serve(
         .route("/candidate", post(candidate))
         .route("/sdp", post(sdp));
 
-    let listener = tokio::net::TcpListener::bind(answer_address).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(answer_address)
+        .await
+        .map_err(PhonexError::BuildTcpListener)?;
 
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app)
+        .await
+        .map_err(PhonexError::ServeHTTP)?;
+
+    Ok(())
 }

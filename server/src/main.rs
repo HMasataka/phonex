@@ -161,7 +161,9 @@ fn on_data_channel() -> Result<OnDataChannelHdlrFn, SpanErr<PhonexError>> {
             }));
 
             d.on_message(Box::new(move |msg: DataChannelMessage| {
-                let msg_str = String::from_utf8(msg.data.to_vec()).unwrap();
+                let msg_str = String::from_utf8(msg.data.to_vec())
+                    .map_err(PhonexError::ConvertByteToString)
+                    .unwrap();
                 println!("Message from DataChannel '{d_label}': '{msg_str}'");
                 Box::pin(async {})
             }));
@@ -204,7 +206,9 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
 
     let pc = Arc::clone(&peer_connection);
     tokio::spawn(async move {
-        handshake::serve(args.offer_address, args.answer_address, &pc).await;
+        handshake::serve(args.offer_address, args.answer_address, &pc)
+            .await
+            .unwrap();
     });
 
     let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
@@ -223,7 +227,10 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
         }
     };
 
-    peer_connection.close().await.unwrap();
+    peer_connection
+        .close()
+        .await
+        .map_err(PhonexError::ClosePeerConnection)?;
 
     Ok(())
 }
