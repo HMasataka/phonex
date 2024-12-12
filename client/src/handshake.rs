@@ -27,7 +27,7 @@ pub struct CandidateRequest {
 
 #[instrument(skip_all, name = "signal_candidate", level = "trace")]
 pub async fn signal_candidate(addr: &str, c: &RTCIceCandidate) -> Result<(), SpanErr<PhonexError>> {
-    let req = c.to_json().unwrap();
+    let req = c.to_json().map_err(PhonexError::ConvertToJson)?;
 
     let resp = reqwest::Client::new()
         .post(format!("http://{addr}/candidate"))

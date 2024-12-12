@@ -34,6 +34,8 @@ pub enum PhonexError {
     ConvertByteToString(FromUtf8Error),
     #[error("failed to add ice candidate: {0}")]
     AddIceCandidate(webrtc::Error),
+    #[error("failed to convert json: {0}")]
+    ConvertToJson(webrtc::Error),
 }
 
 impl IntoResponse for PhonexError {
