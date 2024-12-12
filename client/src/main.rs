@@ -179,7 +179,9 @@ fn on_open(data_channel: Arc<RTCDataChannel>) -> Result<OnOpenHdlrFn, SpanErr<Ph
 #[instrument(skip_all, name = "on_message", level = "trace")]
 fn on_message(data_channel_label: String) -> Result<OnMessageHdlrFn, SpanErr<PhonexError>> {
     Ok(Box::new(move |msg: DataChannelMessage| {
-        let msg_str = String::from_utf8(msg.data.to_vec()).unwrap();
+        let msg_str = String::from_utf8(msg.data.to_vec())
+            .map_err(PhonexError::ConvertByteToString)
+            .unwrap();
         println!("Message from DataChannel '{data_channel_label}': '{msg_str}'");
         Box::pin(async {})
     }))
@@ -217,11 +219,11 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
     let data_channel = peer_connection
         .create_data_channel("data", None)
         .await
-        .unwrap();
+        .map_err(PhonexError::CreateNewDataChannel)?;
 
     let pc = Arc::clone(&peer_connection);
     tokio::spawn(async move {
-        handshake::serve(args.offer_address, &pc).await;
+        handshake::serve(args.offer_address, &pc).await.unwrap();
     });
 
     let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
@@ -231,11 +233,16 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
     data_channel.on_open(on_open(Arc::clone(&data_channel))?);
     data_channel.on_message(on_message(data_channel.label().to_owned())?);
 
-    // Create an offer to send to the other process
-    let offer = peer_connection.create_offer(None).await.unwrap();
+    let offer = peer_connection
+        .create_offer(None)
+        .await
+        .map_err(PhonexError::CreateNewOffer)?;
     let offer2 = offer.clone();
 
-    peer_connection.set_local_description(offer).await.unwrap();
+    peer_connection
+        .set_local_description(offer)
+        .await
+        .map_err(PhonexError::SetLocalDescription)?;
 
     let addr = args.answer_address;
 
@@ -244,7 +251,7 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
         .json(&offer2)
         .send()
         .await
-        .unwrap();
+        .map_err(PhonexError::SendHTTPRequest)?;
     println!("Response: {}", resp.status());
 
     println!("Press ctrl-c to stop");
