@@ -19,6 +19,7 @@ use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
+use webrtc::data_channel::OnMessageHdlrFn;
 use webrtc::data_channel::OnOpenHdlrFn;
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
@@ -150,7 +151,7 @@ fn on_peer_connection_state_change(
     }))
 }
 
-#[instrument(skip_all, name = "on_ice_candidate", level = "trace")]
+#[instrument(skip_all, name = "on_open", level = "trace")]
 fn on_open(data_channel: Arc<RTCDataChannel>) -> Result<OnOpenHdlrFn, SpanErr<PhonexError>> {
     Ok(Box::new(move || {
         println!("Data channel '{}'-'{}' open. Random messages will now be sent to any connected DataChannels every 5 seconds", data_channel.label(), data_channel.id());
@@ -172,6 +173,15 @@ fn on_open(data_channel: Arc<RTCDataChannel>) -> Result<OnOpenHdlrFn, SpanErr<Ph
                 };
             }
         })
+    }))
+}
+
+#[instrument(skip_all, name = "on_message", level = "trace")]
+fn on_message(data_channel_label: String) -> Result<OnMessageHdlrFn, SpanErr<PhonexError>> {
+    Ok(Box::new(move |msg: DataChannelMessage| {
+        let msg_str = String::from_utf8(msg.data.to_vec()).unwrap();
+        println!("Message from DataChannel '{data_channel_label}': '{msg_str}'");
+        Box::pin(async {})
     }))
 }
 
@@ -219,13 +229,7 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
     peer_connection.on_peer_connection_state_change(on_peer_connection_state_change(done_tx)?);
 
     data_channel.on_open(on_open(Arc::clone(&data_channel))?);
-
-    let d_label = data_channel.label().to_owned();
-    data_channel.on_message(Box::new(move |msg: DataChannelMessage| {
-        let msg_str = String::from_utf8(msg.data.to_vec()).unwrap();
-        println!("Message from DataChannel '{d_label}': '{msg_str}'");
-        Box::pin(async {})
-    }));
+    data_channel.on_message(on_message(data_channel.label().to_owned())?);
 
     // Create an offer to send to the other process
     let offer = peer_connection.create_offer(None).await.unwrap();
