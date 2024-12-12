@@ -28,6 +28,7 @@ use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
+use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::OnPeerConnectionStateChangeHdlrFn;
 use webrtc::peer_connection::{math_rand_alpha, RTCPeerConnection};
 
@@ -187,6 +188,20 @@ fn on_message(data_channel_label: String) -> Result<OnMessageHdlrFn, SpanErr<Pho
     }))
 }
 
+#[instrument(skip_all, name = "on_peer_connection_state_change", level = "trace")]
+async fn sdp_offer(addr: String, offer: RTCSessionDescription) -> Result<(), SpanErr<PhonexError>> {
+    let resp = reqwest::Client::new()
+        .post(format!("http://{addr}/sdp"))
+        .json(&offer)
+        .send()
+        .await
+        .map_err(PhonexError::SendHTTPRequest)?;
+
+    println!("Response: {}", resp.status());
+
+    Ok(())
+}
+
 #[tokio::main]
 #[instrument(skip_all, name = "main", level = "trace")]
 async fn main() -> Result<(), SpanErr<PhonexError>> {
@@ -237,22 +252,13 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
         .create_offer(None)
         .await
         .map_err(PhonexError::CreateNewOffer)?;
-    let offer2 = offer.clone();
 
     peer_connection
-        .set_local_description(offer)
+        .set_local_description(offer.clone())
         .await
         .map_err(PhonexError::SetLocalDescription)?;
 
-    let addr = args.answer_address;
-
-    let resp = reqwest::Client::new()
-        .post(format!("http://{addr}/sdp"))
-        .json(&offer2)
-        .send()
-        .await
-        .map_err(PhonexError::SendHTTPRequest)?;
-    println!("Response: {}", resp.status());
+    sdp_offer(args.answer_address, offer).await?;
 
     println!("Press ctrl-c to stop");
     tokio::select! {
