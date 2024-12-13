@@ -30,7 +30,7 @@ lazy_static! {
 async fn main() -> Result<(), SpanErr<PhonexError>> {
     let app = Router::new()
         .route("/", get(hello_world))
-        .route("/ws", any(ws_handler));
+        .route("/ws", any(upgrade_to_websocket));
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     println!("listening on {}", addr);
@@ -55,7 +55,7 @@ pub struct CandidateRequest {
     pub candidate: String,
 }
 
-async fn ws_handler(ws: WebSocketUpgrade) -> impl IntoResponse {
+async fn upgrade_to_websocket(ws: WebSocketUpgrade) -> impl IntoResponse {
     println!("connected");
     ws.on_upgrade(handle_socket)
 }
@@ -64,6 +64,12 @@ async fn handle_socket(mut ws: WebSocket) {
     while let Some(message) = ws.recv().await {
         if let Ok(msg) = message {
             match msg {
+                Message::Pong(v) => {
+                    println!(">>> sent pong with {v:?}");
+                }
+                Message::Ping(v) => {
+                    println!(">>> sent ping with {v:?}");
+                }
                 Message::Text(text) => println!("{}", text),
                 Message::Close(_) => break,
                 _ => { /* no-op */ }
