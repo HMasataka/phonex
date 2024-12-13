@@ -1,8 +1,8 @@
 mod err;
 
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
 use std::sync::Arc;
+use std::{cell::Cell, net::SocketAddr};
 use tokio::sync::Mutex;
 
 use axum::{
@@ -60,22 +60,37 @@ async fn upgrade_to_websocket(ws: WebSocketUpgrade) -> impl IntoResponse {
     ws.on_upgrade(handle_socket)
 }
 
-async fn handle_socket(mut ws: WebSocket) {
-    while let Some(message) = ws.recv().await {
-        if let Ok(msg) = message {
-            match msg {
-                Message::Pong(v) => {
-                    println!(">>> sent pong with {v:?}");
+async fn handle_socket(ws: WebSocket) {
+    let mut connection = Connection::new(ws);
+    connection.handle().await;
+}
+
+struct Connection {
+    ws: Cell<WebSocket>,
+}
+
+impl Connection {
+    fn new(ws: WebSocket) -> Self {
+        Self { ws: Cell::new(ws) }
+    }
+
+    async fn handle(&mut self) {
+        while let Some(message) = self.ws.get_mut().recv().await {
+            if let Ok(msg) = message {
+                match msg {
+                    Message::Pong(v) => {
+                        println!(">>> sent pong with {v:?}");
+                    }
+                    Message::Ping(v) => {
+                        println!(">>> sent ping with {v:?}");
+                    }
+                    Message::Text(text) => println!("{}", text),
+                    Message::Binary(text) => println!("bin: {:?}", text),
+                    Message::Close(_) => break,
                 }
-                Message::Ping(v) => {
-                    println!(">>> sent ping with {v:?}");
-                }
-                Message::Text(text) => println!("{}", text),
-                Message::Close(_) => break,
-                _ => { /* no-op */ }
-            }
-        } else {
-            break;
-        };
+            } else {
+                break;
+            };
+        }
     }
 }
