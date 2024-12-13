@@ -35,13 +35,6 @@ use webrtc::peer_connection::{math_rand_alpha, RTCPeerConnection};
 #[macro_use]
 extern crate lazy_static;
 
-lazy_static! {
-    static ref PEER_CONNECTION_MUTEX: Arc<Mutex<Option<Arc<RTCPeerConnection>>>> =
-        Arc::new(Mutex::new(None));
-    static ref PENDING_CANDIDATES: Arc<Mutex<Vec<RTCIceCandidate>>> = Arc::new(Mutex::new(vec![]));
-    static ref ADDRESS: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
-}
-
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -213,11 +206,6 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
 
     println!("{:?}", args);
 
-    {
-        let mut oa = ADDRESS.lock().await;
-        oa.clone_from(&args.answer_address);
-    }
-
     let peer_connection = initialize_peer_connection().await?;
 
     peer_connection.on_ice_candidate(on_ice_candidate(
@@ -225,11 +213,6 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
         Arc::clone(&handshake::PENDING_CANDIDATES),
         args.answer_address.clone(),
     )?);
-
-    {
-        let mut pcm = PEER_CONNECTION_MUTEX.lock().await;
-        *pcm = Some(Arc::clone(&peer_connection));
-    }
 
     let data_channel = peer_connection
         .create_data_channel("data", None)
