@@ -78,19 +78,24 @@ impl Connection {
         while let Some(message) = self.ws.get_mut().recv().await {
             if let Ok(msg) = message {
                 match msg {
-                    Message::Pong(v) => {
-                        println!(">>> sent pong with {v:?}");
-                    }
-                    Message::Ping(v) => {
-                        println!(">>> sent ping with {v:?}");
-                    }
-                    Message::Text(text) => println!("{}", text),
-                    Message::Binary(text) => println!("bin: {:?}", text),
+                    Message::Pong(v) => println!(">>> sent pong with {v:?}"),
+                    Message::Ping(v) => println!(">>> sent ping with {v:?}"),
+                    Message::Text(text) => self.handle_string(text),
+                    Message::Binary(binary) => self.handle_binary(binary),
                     Message::Close(_) => break,
                 }
             } else {
                 break;
             };
         }
+    }
+
+    fn handle_string(&mut self, message: String) {
+        println!("{}", message);
+    }
+
+    fn handle_binary(&mut self, message: Vec<u8>) {
+        let converted: String = String::from_utf8(message.to_vec()).unwrap();
+        self.handle_string(converted);
     }
 }
