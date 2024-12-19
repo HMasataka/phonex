@@ -92,14 +92,14 @@ async fn handle_socket(ws: WebSocket, channel: Arc<WsChannel>) {
 
 struct Connection {
     ws: Cell<WebSocket>,
-    channel: Arc<WsChannel>,
+    chan: Arc<WsChannel>,
 }
 
 impl Connection {
-    fn new(ws: WebSocket, channel: Arc<WsChannel>) -> Self {
+    fn new(ws: WebSocket, chan: Arc<WsChannel>) -> Self {
         Self {
             ws: Cell::new(ws),
-            channel: channel,
+            chan,
         }
     }
 
@@ -122,7 +122,7 @@ impl Connection {
     async fn handle_string(&mut self, message: String) {
         let deserialized: message::Message = serde_json::from_str(&message).unwrap();
 
-        let tx = self.channel.register_sender.lock().await;
+        let tx = self.chan.register_sender.lock().await;
 
         tx.send(RegisterRequest {
             id: "1".to_string(),
