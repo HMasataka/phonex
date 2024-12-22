@@ -35,8 +35,9 @@ lazy_static! {
 #[tokio::main]
 async fn main() -> Result<(), SpanErr<PhonexError>> {
     let (tx, rx) = mpsc::channel::<r#match::RegisterRequest>(100);
+    let (tx1, rx1) = mpsc::channel::<r#match::SessionDescriptionRequest>(100);
 
-    let mut match_server = r#match::Server::new(Cell::new(rx));
+    let mut match_server = r#match::Server::new(Cell::new(rx), Cell::new(rx1));
 
     tokio::spawn(async move {
         match_server.serve().await;
@@ -44,6 +45,7 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
 
     let channels = WsChannel {
         register_sender: Arc::new(Mutex::new(tx)),
+        sdp_sender: Arc::new(Mutex::new(tx1)),
     };
 
     let app = Router::new()
@@ -89,20 +91,21 @@ async fn handle_socket(ws: WebSocket, channel: Arc<WsChannel>) {
 }
 
 struct Connection {
-    ws: Cell<WebSocket>,
+    ws: Arc<Mutex<WebSocket>>,
     chan: Arc<WsChannel>,
 }
 
 impl Connection {
     fn new(ws: WebSocket, channel: Arc<WsChannel>) -> Self {
         Self {
-            ws: Cell::new(ws),
+            ws: Arc::new(Mutex::new(ws)),
             chan: channel,
         }
     }
 
     async fn handle(&mut self) {
-        while let Some(message) = self.ws.get_mut().recv().await {
+        let ws = Arc::clone(&self.ws);
+        while let Some(message) = ws.lock().await.recv().await {
             if let Ok(msg) = message {
                 match msg {
                     Message::Text(text) => self.handle_string(text).await,
@@ -126,6 +129,7 @@ impl Connection {
 
                 tx.send(RegisterRequest {
                     id: "1".to_string(),
+                    ws: Arc::clone(&self.ws),
                 })
                 .await
                 .unwrap();
