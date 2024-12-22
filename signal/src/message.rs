@@ -10,5 +10,5 @@ pub enum RequestType {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Message {
     #[serde(rename = "type")]
-    typ: RequestType,
+    pub typ: RequestType,
 }

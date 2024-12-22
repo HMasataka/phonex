@@ -4,6 +4,7 @@ mod r#match;
 mod message;
 
 use channel::WsChannel;
+use message::RequestType;
 use r#match::RegisterRequest;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -104,10 +105,10 @@ impl Connection {
         while let Some(message) = self.ws.get_mut().recv().await {
             if let Ok(msg) = message {
                 match msg {
-                    Message::Pong(v) => println!(">>> sent pong with {v:?}"),
-                    Message::Ping(v) => println!(">>> sent ping with {v:?}"),
                     Message::Text(text) => self.handle_string(text).await,
                     Message::Binary(binary) => self.handle_binary(binary).await,
+                    Message::Pong(v) => println!(">>> sent pong with {v:?}"),
+                    Message::Ping(v) => println!(">>> receive ping with {v:?}"),
                     Message::Close(_) => break,
                 }
             } else {
@@ -119,13 +120,23 @@ impl Connection {
     async fn handle_string(&mut self, message: String) {
         let deserialized: message::Message = serde_json::from_str(&message).unwrap();
 
-        let tx = self.chan.register_sender.lock().await;
+        match deserialized.typ {
+            RequestType::Register => {
+                let tx = self.chan.register_sender.lock().await;
 
-        tx.send(RegisterRequest {
-            id: "1".to_string(),
-        })
-        .await
-        .unwrap();
+                tx.send(RegisterRequest {
+                    id: "1".to_string(),
+                })
+                .await
+                .unwrap();
+            }
+            RequestType::Ping => {
+                println!(">>> receive ping");
+            }
+            RequestType::Pong => {
+                println!(">>> sent pong");
+            }
+        }
 
         println!("{:?}", deserialized);
     }
