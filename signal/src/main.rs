@@ -24,10 +24,7 @@ use err::PhonexError;
 use lazy_static::lazy_static;
 use tracing_spanned::SpanErr;
 
-use webrtc::{
-    ice_transport::ice_candidate::RTCIceCandidate,
-    peer_connection::sdp::session_description::RTCSessionDescription,
-};
+use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 
 lazy_static! {
     pub static ref PENDING_CANDIDATES: Arc<Mutex<Vec<RTCIceCandidate>>> =
@@ -96,10 +93,10 @@ struct Connection {
 }
 
 impl Connection {
-    fn new(ws: WebSocket, chan: Arc<WsChannel>) -> Self {
+    fn new(ws: WebSocket, channel: Arc<WsChannel>) -> Self {
         Self {
             ws: Cell::new(ws),
-            chan,
+            chan: channel,
         }
     }
 
