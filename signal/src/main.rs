@@ -1,14 +1,14 @@
-mod channel;
 mod err;
 mod r#match;
 mod message;
 
-use channel::WsChannel;
+use futures::stream::StreamExt;
 use message::RequestType;
-use r#match::RegisterRequest;
+use r#match::{MatchRequest, MatchResponse};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{cell::Cell, net::SocketAddr};
+use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, Mutex};
 
 use axum::{
@@ -34,24 +34,18 @@ lazy_static! {
 
 #[tokio::main]
 async fn main() -> Result<(), SpanErr<PhonexError>> {
-    let (tx, rx) = mpsc::channel::<r#match::RegisterRequest>(100);
-    let (tx1, rx1) = mpsc::channel::<r#match::SessionDescriptionRequest>(100);
+    let (tx, rx) = mpsc::channel::<r#match::MatchRequest>(100);
 
-    let mut match_server = r#match::Server::new(Cell::new(rx), Cell::new(rx1));
+    let mut match_server = r#match::Server::new(Cell::new(rx));
 
     tokio::spawn(async move {
         match_server.serve().await;
     });
 
-    let channels = WsChannel {
-        register_sender: Arc::new(Mutex::new(tx)),
-        sdp_sender: Arc::new(Mutex::new(tx1)),
-    };
-
     let app = Router::new()
         .route("/", get(hello_world))
         .route("/ws", any(upgrade_to_websocket))
-        .with_state(Arc::new(channels));
+        .with_state(tx);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     println!("listening on {}", addr);
@@ -77,62 +71,60 @@ pub struct CandidateRequest {
 }
 
 async fn upgrade_to_websocket(
-    State(channel): State<Arc<WsChannel>>,
+    State(channel): State<Sender<MatchRequest>>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
     println!("connected");
 
-    ws.on_upgrade(|socket| handle_socket(socket, channel))
+    ws.on_upgrade(move |socket| handle_socket(socket, channel))
 }
 
-async fn handle_socket(ws: WebSocket, channel: Arc<WsChannel>) {
-    let mut connection = Connection::new(ws, channel);
-    connection.handle().await;
+async fn handle_socket(ws: WebSocket, sender: Sender<MatchRequest>) {
+    let (mut _sender, mut receiver) = ws.split();
+    let (tx, _rx) = mpsc::channel::<MatchResponse>(100);
+    let handler = Handler::new(sender, tx);
+
+    while let Some(message) = receiver.next().await {
+        if let Ok(msg) = message {
+            match msg {
+                Message::Text(text) => handler.clone().string(text).await,
+                Message::Binary(binary) => handler.clone().binary(binary).await,
+                Message::Pong(v) => println!(">>> sent pong with {v:?}"),
+                Message::Ping(v) => println!(">>> receive ping with {v:?}"),
+                Message::Close(_) => break,
+            }
+        } else {
+            break;
+        };
+    }
 }
 
-struct Connection {
-    ws: Arc<Mutex<WebSocket>>,
-    chan: Arc<WsChannel>,
+#[derive(Clone)]
+pub struct Handler {
+    request_sender: Sender<MatchRequest>,
+    response_sender: Sender<MatchResponse>,
 }
 
-impl Connection {
-    fn new(ws: WebSocket, channel: Arc<WsChannel>) -> Self {
+impl Handler {
+    fn new(req: Sender<MatchRequest>, res: Sender<MatchResponse>) -> Self {
         Self {
-            ws: Arc::new(Mutex::new(ws)),
-            chan: channel,
+            request_sender: req,
+            response_sender: res,
         }
     }
 
-    async fn handle(&mut self) {
-        let ws = Arc::clone(&self.ws);
-        while let Some(message) = ws.lock().await.recv().await {
-            if let Ok(msg) = message {
-                match msg {
-                    Message::Text(text) => self.handle_string(text).await,
-                    Message::Binary(binary) => self.handle_binary(binary).await,
-                    Message::Pong(v) => println!(">>> sent pong with {v:?}"),
-                    Message::Ping(v) => println!(">>> receive ping with {v:?}"),
-                    Message::Close(_) => break,
-                }
-            } else {
-                break;
-            };
-        }
-    }
-
-    async fn handle_string(&mut self, message: String) {
+    async fn string(self, message: String) {
         let deserialized: message::Message = serde_json::from_str(&message).unwrap();
 
         match deserialized.typ {
             RequestType::Register => {
-                let tx = self.chan.register_sender.lock().await;
-
-                tx.send(RegisterRequest {
-                    id: "1".to_string(),
-                    ws: Arc::clone(&self.ws),
-                })
-                .await
-                .unwrap();
+                self.request_sender
+                    .send(r#match::MatchRequest {
+                        id: "1".to_string(),
+                        chan: self.response_sender,
+                    })
+                    .await
+                    .unwrap();
             }
             RequestType::Ping => {
                 println!(">>> receive ping");
@@ -145,8 +137,8 @@ impl Connection {
         println!("{:?}", deserialized);
     }
 
-    async fn handle_binary(&mut self, message: Vec<u8>) {
+    async fn binary(self, message: Vec<u8>) {
         let converted: String = String::from_utf8(message.to_vec()).unwrap();
-        self.handle_string(converted).await;
+        self.string(converted).await;
     }
 }

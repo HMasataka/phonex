@@ -1,48 +1,37 @@
-use axum::extract::ws::WebSocket;
 use std::cell::Cell;
 use std::sync::Arc;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
 
 pub struct Server {
-    sockets: Arc<Mutex<Vec<Arc<Mutex<WebSocket>>>>>,
-    register_receiver: Cell<Receiver<RegisterRequest>>,
-    sdp_receiver: Cell<Receiver<SessionDescriptionRequest>>,
+    receiver: Cell<Receiver<MatchRequest>>,
+    sockets: Arc<Mutex<Vec<Sender<MatchResponse>>>>,
 }
 
 #[derive(Debug)]
-pub struct RegisterRequest {
+pub struct MatchRequest {
     pub id: String,
-    pub ws: Arc<Mutex<WebSocket>>,
+    pub chan: Sender<MatchResponse>,
 }
 
-#[derive(Debug)]
-pub struct SessionDescriptionRequest {
+pub struct MatchResponse {
     pub id: String,
 }
 
 impl Server {
-    pub fn new(
-        rx: Cell<Receiver<RegisterRequest>>,
-        rx1: Cell<Receiver<SessionDescriptionRequest>>,
-    ) -> Self {
+    pub fn new(rx: Cell<Receiver<MatchRequest>>) -> Self {
         Self {
             sockets: Arc::new(Mutex::new(vec![])),
-            register_receiver: rx,
-            sdp_receiver: rx1,
+            receiver: rx,
         }
     }
 
     pub async fn serve(&mut self) {
         loop {
             tokio::select! {
-                val = self.register_receiver.get_mut().recv() => {
+                val = self.receiver.get_mut().recv() => {
                     let request = val.unwrap();
-                    self.sockets.lock().await.push(request.ws);
-                }
-                val = self.sdp_receiver.get_mut().recv() => {
-                    let request = val.unwrap();
-                    println!("{:?}",request);
+                    self.sockets.lock().await.push(request.chan);
                 }
             };
         }

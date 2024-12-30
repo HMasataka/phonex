@@ -17,3 +17,8 @@ tracing-error = "0.2.0"
 tracing-subscriber = "0.3.18"
 tracing_spanned = { git = "https://github.com/comnipl/tracing_spanned", rev = "6fed6097d13d117e4d35120f56450b156c33b77e" }
 axum = { version = "0.7.9", features = ["ws"] }
+futures = "0.3.31"
+futures-util = { version = "0.3.31", default-features = false, features = [
+  "sink",
+  "std",
+] }
