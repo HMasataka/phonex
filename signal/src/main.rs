@@ -131,6 +131,30 @@ impl Handler {
                     .await
                     .unwrap();
             }
+            RequestType::SessionDescription => {
+                let session_description_message: message::SessionDescriptionMessage =
+                    serde_json::from_str(&deserialized.raw).unwrap();
+
+                self.request_sender
+                    .send(MatchRequest::new_sdp_request(
+                        session_description_message.target_id,
+                        session_description_message.sdp,
+                    ))
+                    .await
+                    .unwrap();
+            }
+            RequestType::Candidate => {
+                let candidate_message: message::CandidateMessage =
+                    serde_json::from_str(&deserialized.raw).unwrap();
+
+                self.request_sender
+                    .send(MatchRequest::new_candidate_request(
+                        candidate_message.target_id,
+                        candidate_message.candidate,
+                    ))
+                    .await
+                    .unwrap();
+            }
             RequestType::Ping => {
                 println!(">>> receive ping");
             }
