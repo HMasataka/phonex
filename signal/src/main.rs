@@ -6,7 +6,10 @@ mod message;
 use futures::stream::StreamExt;
 use match_server::Server;
 use message::RequestType;
-use r#match::{MatchRequest, MatchResponse};
+use r#match::{
+    MatchCandidateRequest, MatchRegisterRequest, MatchRequest, MatchResponse,
+    MatchSessionDescriptionRequest,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{cell::Cell, net::SocketAddr};
@@ -124,10 +127,10 @@ impl Handler {
                     serde_json::from_str(&deserialized.raw).unwrap();
 
                 self.request_sender
-                    .send(MatchRequest::new_register_request(
-                        register_message.id,
-                        self.response_sender,
-                    ))
+                    .send(MatchRequest::Register(MatchRegisterRequest {
+                        id: register_message.id,
+                        chan: self.response_sender,
+                    }))
                     .await
                     .unwrap();
             }
@@ -136,9 +139,11 @@ impl Handler {
                     serde_json::from_str(&deserialized.raw).unwrap();
 
                 self.request_sender
-                    .send(MatchRequest::new_sdp_request(
-                        session_description_message.target_id,
-                        session_description_message.sdp,
+                    .send(MatchRequest::SessionDescription(
+                        MatchSessionDescriptionRequest {
+                            target_id: session_description_message.target_id,
+                            sdp: session_description_message.sdp,
+                        },
                     ))
                     .await
                     .unwrap();
@@ -148,10 +153,10 @@ impl Handler {
                     serde_json::from_str(&deserialized.raw).unwrap();
 
                 self.request_sender
-                    .send(MatchRequest::new_candidate_request(
-                        candidate_message.target_id,
-                        candidate_message.candidate,
-                    ))
+                    .send(MatchRequest::Candidate(MatchCandidateRequest {
+                        target_id: candidate_message.target_id,
+                        candidate: candidate_message.candidate,
+                    }))
                     .await
                     .unwrap();
             }

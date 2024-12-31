@@ -5,8 +5,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
 
 use crate::r#match::{
-    MatchCandidateRequest, MatchRegisterRequest, MatchRequest, MatchRequestType, MatchResponse,
-    MatchSessionDescriptionRequest,
+    MatchCandidateResponse, MatchRequest, MatchResponse, MatchSessionDescriptionResponse,
 };
 
 pub struct Server {
@@ -34,47 +33,41 @@ impl Server {
     }
 
     pub async fn handle_request(&mut self, request: MatchRequest) {
-        match request.request_type {
-            MatchRequestType::Register => {
-                let value: Result<MatchRegisterRequest, ()> = request.try_into();
-                if let Ok(v) = value {
-                    let mut m = self.response_channels.lock().await;
-                    if m.contains_key(&v.id) {
-                        return;
-                    }
-
-                    m.insert(v.id, v.chan);
+        match request {
+            MatchRequest::Register(value) => {
+                let mut m = self.response_channels.lock().await;
+                if m.contains_key(&value.id) {
+                    return;
                 }
-            }
-            MatchRequestType::SessionDescription => {
-                let value: Result<MatchSessionDescriptionRequest, ()> = request.try_into();
-                if let Ok(v) = value {
-                    let m = self.response_channels.lock().await;
-                    if m.contains_key(&v.target_id) {
-                        return;
-                    }
 
-                    let chan = m.get(&v.target_id).unwrap();
-                    chan.send(MatchResponse::new_sdp_response(v.sdp))
-                        .await
-                        .unwrap();
-                }
+                m.insert(value.id, value.chan);
             }
-            MatchRequestType::Candidate => {
-                let value: Result<MatchCandidateRequest, ()> = request.try_into();
-                if let Ok(v) = value {
-                    let m = self.response_channels.lock().await;
-                    if m.contains_key(&v.target_id) {
-                        return;
-                    }
+            MatchRequest::SessionDescription(value) => {
+                let m = self.response_channels.lock().await;
+                if m.contains_key(&value.target_id) {
+                    return;
+                }
 
-                    let chan = m.get(&v.target_id).unwrap();
-                    chan.send(MatchResponse::new_candidate_response(v.candidate))
-                        .await
-                        .unwrap();
-                }
+                let chan = m.get(&value.target_id).unwrap();
+                chan.send(MatchResponse::SessionDescription(
+                    MatchSessionDescriptionResponse { sdp: value.sdp },
+                ))
+                .await
+                .unwrap();
             }
-            MatchRequestType::None => {}
+            MatchRequest::Candidate(value) => {
+                let m = self.response_channels.lock().await;
+                if m.contains_key(&value.target_id) {
+                    return;
+                }
+
+                let chan = m.get(&value.target_id).unwrap();
+                chan.send(MatchResponse::Candidate(MatchCandidateResponse {
+                    candidate: value.candidate,
+                }))
+                .await
+                .unwrap();
+            }
         }
     }
 }
