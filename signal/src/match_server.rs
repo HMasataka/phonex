@@ -49,15 +49,29 @@ impl Server {
             MatchRequestType::SessionDescription => {
                 let value: Result<MatchSessionDescriptionRequest, ()> = request.try_into();
                 if let Ok(v) = value {
-                    // TODO send sdp
-                    println!("{:?}", v)
+                    let m = self.response_channels.lock().await;
+                    if m.contains_key(&v.target_id) {
+                        return;
+                    }
+
+                    let chan = m.get(&v.target_id).unwrap();
+                    chan.send(MatchResponse::new_sdp_response(v.sdp))
+                        .await
+                        .unwrap();
                 }
             }
             MatchRequestType::Candidate => {
                 let value: Result<MatchCandidateRequest, ()> = request.try_into();
                 if let Ok(v) = value {
-                    // TODO send candidate
-                    println!("{:?}", v)
+                    let m = self.response_channels.lock().await;
+                    if m.contains_key(&v.target_id) {
+                        return;
+                    }
+
+                    let chan = m.get(&v.target_id).unwrap();
+                    chan.send(MatchResponse::new_candidate_response(v.candidate))
+                        .await
+                        .unwrap();
                 }
             }
             MatchRequestType::None => {}

@@ -112,6 +112,58 @@ impl TryFrom<MatchRequest> for MatchCandidateRequest {
     }
 }
 
+#[derive(Default)]
 pub struct MatchResponse {
-    pub id: String,
+    pub sdp: Option<RTCSessionDescription>,
+    pub candidate: Option<String>,
+}
+
+impl MatchResponse {
+    pub fn new_sdp_response(sdp: RTCSessionDescription) -> Self {
+        Self {
+            sdp: Some(sdp),
+            ..Default::default()
+        }
+    }
+
+    pub fn new_candidate_response(candidate: String) -> Self {
+        Self {
+            candidate: Some(candidate),
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct MatchSessionDescriptionResponse {
+    pub sdp: RTCSessionDescription,
+}
+
+impl TryFrom<MatchResponse> for MatchSessionDescriptionResponse {
+    type Error = ();
+
+    fn try_from(req: MatchResponse) -> Result<Self, Self::Error> {
+        if let Some(sdp) = req.sdp {
+            Ok(MatchSessionDescriptionResponse { sdp })
+        } else {
+            Err(())
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct MatchCandidateResponse {
+    pub candidate: String,
+}
+
+impl TryFrom<MatchResponse> for MatchCandidateResponse {
+    type Error = ();
+
+    fn try_from(req: MatchResponse) -> Result<Self, Self::Error> {
+        if let Some(candidate) = req.candidate {
+            Ok(MatchCandidateResponse { candidate })
+        } else {
+            Err(())
+        }
+    }
 }
