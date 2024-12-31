@@ -3,17 +3,15 @@ mod r#match;
 mod match_server;
 mod message;
 
-use futures::stream::StreamExt;
+use futures::stream::{SplitSink, StreamExt};
+use futures::SinkExt;
 use match_server::Server;
 use message::RequestType;
-use r#match::{
-    MatchCandidateRequest, MatchRegisterRequest, MatchRequest, MatchResponse,
-    MatchSessionDescriptionRequest,
-};
+use r#match::{MatchRegisterRequest, MatchRequest, MatchResponse};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{cell::Cell, net::SocketAddr};
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{mpsc, Mutex};
 
 use axum::{
@@ -84,16 +82,21 @@ async fn upgrade_to_websocket(
     ws.on_upgrade(move |socket| handle_socket(socket, channel))
 }
 
-async fn handle_socket(ws: WebSocket, sender: Sender<MatchRequest>) {
-    let (mut _sender, mut receiver) = ws.split();
-    let (tx, _rx) = mpsc::channel::<MatchResponse>(100);
-    let handler = Handler::new(sender, tx);
+async fn handle_socket(ws: WebSocket, match_sender: Sender<MatchRequest>) {
+    let (sender, mut receiver) = ws.split();
+    let (tx, rx) = mpsc::channel::<MatchResponse>(100);
+    let request_handler = RequestHandler::new(match_sender, tx);
+    let mut response_handler = ResponseHandler::new(sender, Cell::new(rx));
+
+    tokio::spawn(async move {
+        response_handler.serve().await;
+    });
 
     while let Some(message) = receiver.next().await {
         if let Ok(msg) = message {
             match msg {
-                Message::Text(text) => handler.clone().string(text).await,
-                Message::Binary(binary) => handler.clone().binary(binary).await,
+                Message::Text(text) => request_handler.clone().string(text).await,
+                Message::Binary(binary) => request_handler.clone().binary(binary).await,
                 Message::Pong(v) => println!(">>> sent pong with {v:?}"),
                 Message::Ping(v) => println!(">>> receive ping with {v:?}"),
                 Message::Close(_) => break,
@@ -105,12 +108,12 @@ async fn handle_socket(ws: WebSocket, sender: Sender<MatchRequest>) {
 }
 
 #[derive(Clone)]
-pub struct Handler {
+pub struct RequestHandler {
     request_sender: Sender<MatchRequest>,
     response_sender: Sender<MatchResponse>,
 }
 
-impl Handler {
+impl RequestHandler {
     fn new(req: Sender<MatchRequest>, res: Sender<MatchResponse>) -> Self {
         Self {
             request_sender: req,
@@ -168,5 +171,35 @@ impl Handler {
     async fn binary(self, message: Vec<u8>) {
         let converted: String = String::from_utf8(message.to_vec()).unwrap();
         self.string(converted).await;
+    }
+}
+
+pub struct ResponseHandler {
+    ws: SplitSink<WebSocket, Message>,
+    response_receiver: Cell<Receiver<MatchResponse>>,
+}
+
+impl ResponseHandler {
+    fn new(
+        ws: SplitSink<WebSocket, Message>,
+        response_receiver: Cell<Receiver<MatchResponse>>,
+    ) -> Self {
+        Self {
+            ws,
+            response_receiver,
+        }
+    }
+
+    async fn serve(&mut self) {
+        loop {
+            tokio::select! {
+                val = self.response_receiver.get_mut().recv() => {
+                    let response = val.unwrap();
+                    println!("{:?}",response);
+
+                    self.ws.send(Message::Text(format!("message").into())).await.unwrap();
+                }
+            };
+        }
     }
 }

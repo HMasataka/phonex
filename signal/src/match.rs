@@ -46,6 +46,7 @@ impl From<CandidateMessage> for MatchCandidateRequest {
     }
 }
 
+#[derive(Debug)]
 pub enum MatchResponse {
     SessionDescription(MatchSessionDescriptionResponse),
     Candidate(MatchCandidateResponse),
