@@ -1,10 +1,12 @@
 mod err;
 mod r#match;
+mod match_server;
 mod message;
 
 use futures::stream::StreamExt;
+use match_server::Server;
 use message::RequestType;
-use r#match::{MatchRequest, MatchRequestType, MatchResponse, Server};
+use r#match::{MatchRequest, MatchRequestType, MatchResponse};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{cell::Cell, net::SocketAddr};
