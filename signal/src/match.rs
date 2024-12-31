@@ -1,6 +1,8 @@
 use tokio::sync::mpsc::Sender;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
+use crate::message::{CandidateMessage, SessionDescriptionMessage};
+
 #[derive(Debug)]
 pub enum MatchRequest {
     Register(MatchRegisterRequest),
@@ -20,10 +22,28 @@ pub struct MatchSessionDescriptionRequest {
     pub sdp: RTCSessionDescription,
 }
 
+impl From<SessionDescriptionMessage> for MatchSessionDescriptionRequest {
+    fn from(m: SessionDescriptionMessage) -> Self {
+        MatchSessionDescriptionRequest {
+            target_id: m.target_id,
+            sdp: m.sdp,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct MatchCandidateRequest {
     pub target_id: String,
     pub candidate: String,
+}
+
+impl From<CandidateMessage> for MatchCandidateRequest {
+    fn from(m: CandidateMessage) -> Self {
+        MatchCandidateRequest {
+            target_id: m.target_id,
+            candidate: m.candidate,
+        }
+    }
 }
 
 pub enum MatchResponse {

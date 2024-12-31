@@ -140,10 +140,7 @@ impl Handler {
 
                 self.request_sender
                     .send(MatchRequest::SessionDescription(
-                        MatchSessionDescriptionRequest {
-                            target_id: session_description_message.target_id,
-                            sdp: session_description_message.sdp,
-                        },
+                        session_description_message.into(),
                     ))
                     .await
                     .unwrap();
@@ -153,10 +150,7 @@ impl Handler {
                     serde_json::from_str(&deserialized.raw).unwrap();
 
                 self.request_sender
-                    .send(MatchRequest::Candidate(MatchCandidateRequest {
-                        target_id: candidate_message.target_id,
-                        candidate: candidate_message.candidate,
-                    }))
+                    .send(MatchRequest::Candidate(candidate_message.into()))
                     .await
                     .unwrap();
             }
