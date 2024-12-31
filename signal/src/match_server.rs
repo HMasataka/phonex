@@ -35,6 +35,8 @@ impl Server {
     pub async fn handle_request(&mut self, request: MatchRequest) {
         match request {
             MatchRequest::Register(value) => {
+                println!("{:?}", value);
+
                 let mut m = self.response_channels.lock().await;
                 if m.contains_key(&value.id) {
                     return;
@@ -43,6 +45,8 @@ impl Server {
                 m.insert(value.id, value.chan);
             }
             MatchRequest::SessionDescription(value) => {
+                println!("{:?}", value);
+
                 let m = self.response_channels.lock().await;
                 if m.contains_key(&value.target_id) {
                     return;
@@ -56,6 +60,8 @@ impl Server {
                 .unwrap();
             }
             MatchRequest::Candidate(value) => {
+                println!("{:?}", value);
+
                 let m = self.response_channels.lock().await;
                 if m.contains_key(&value.target_id) {
                     return;

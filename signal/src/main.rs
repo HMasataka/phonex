@@ -195,7 +195,7 @@ impl ResponseHandler {
             tokio::select! {
                 val = self.response_receiver.get_mut().recv() => {
                     let response = val.unwrap();
-                    println!("{:?}",response);
+                    println!("{:?}", response);
 
                     self.ws.send(Message::Text(format!("message").into())).await.unwrap();
                 }
