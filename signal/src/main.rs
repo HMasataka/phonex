@@ -120,9 +120,12 @@ impl Handler {
 
         match deserialized.request_type {
             RequestType::Register => {
+                let register_message: message::RegisterMessage =
+                    serde_json::from_str(&deserialized.raw).unwrap();
+
                 self.request_sender
                     .send(MatchRequest::new_register_request(
-                        "1".to_string(),
+                        register_message.id,
                         self.response_sender,
                     ))
                     .await
