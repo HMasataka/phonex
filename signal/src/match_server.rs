@@ -37,6 +37,9 @@ impl Server {
                     self.response_channels.lock().await.push(v.chan);
                 }
             }
+            MatchRequestType::SessionDescription => {}
+            MatchRequestType::Candidate => {}
+            MatchRequestType::None => {}
         }
     }
 }

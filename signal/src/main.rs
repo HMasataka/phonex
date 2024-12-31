@@ -121,11 +121,10 @@ impl Handler {
         match deserialized.request_type {
             RequestType::Register => {
                 self.request_sender
-                    .send(MatchRequest {
-                        request_type: MatchRequestType::Register,
-                        id: Some("1".to_string()),
-                        chan: Some(self.response_sender),
-                    })
+                    .send(MatchRequest::new_register_request(
+                        "1".to_string(),
+                        self.response_sender,
+                    ))
                     .await
                     .unwrap();
             }

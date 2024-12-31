@@ -1,14 +1,52 @@
 use tokio::sync::mpsc::Sender;
+use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub enum MatchRequestType {
+    #[default]
+    None,
     Register,
+    SessionDescription,
+    Candidate,
 }
 
+#[derive(Default)]
 pub struct MatchRequest {
     pub request_type: MatchRequestType,
     pub id: Option<String>,
     pub chan: Option<Sender<MatchResponse>>,
+    pub target_id: Option<String>,
+    pub sdp: Option<RTCSessionDescription>,
+    pub candidate: Option<String>,
+}
+
+impl MatchRequest {
+    pub fn new_register_request(id: String, chan: Sender<MatchResponse>) -> Self {
+        Self {
+            request_type: MatchRequestType::Register,
+            id: Some(id),
+            chan: Some(chan),
+            ..Default::default()
+        }
+    }
+
+    pub fn new_sdp_request(target_id: String, sdp: RTCSessionDescription) -> Self {
+        Self {
+            request_type: MatchRequestType::SessionDescription,
+            target_id: Some(target_id),
+            sdp: Some(sdp),
+            ..Default::default()
+        }
+    }
+
+    pub fn new_candidate_request(target_id: String, candidate: String) -> Self {
+        Self {
+            request_type: MatchRequestType::Register,
+            target_id: Some(target_id),
+            candidate: Some(candidate),
+            ..Default::default()
+        }
+    }
 }
 
 pub struct MatchRegisterRequest {
@@ -24,6 +62,46 @@ impl TryFrom<MatchRequest> for MatchRegisterRequest {
             Ok(MatchRegisterRequest {
                 id: req.id.unwrap(),
                 chan: req.chan.unwrap(),
+            })
+        } else {
+            Err(())
+        }
+    }
+}
+
+pub struct MatchSessionDescriptionRequest {
+    pub target_id: String,
+    pub sdp: RTCSessionDescription,
+}
+
+impl TryFrom<MatchRequest> for MatchSessionDescriptionRequest {
+    type Error = ();
+
+    fn try_from(req: MatchRequest) -> Result<Self, Self::Error> {
+        if req.target_id.is_some() && req.sdp.is_some() {
+            Ok(MatchSessionDescriptionRequest {
+                target_id: req.target_id.unwrap(),
+                sdp: req.sdp.unwrap(),
+            })
+        } else {
+            Err(())
+        }
+    }
+}
+
+pub struct MatchCandidateRequest {
+    pub target_id: String,
+    pub candidate: String,
+}
+
+impl TryFrom<MatchRequest> for MatchCandidateRequest {
+    type Error = ();
+
+    fn try_from(req: MatchRequest) -> Result<Self, Self::Error> {
+        if req.target_id.is_some() && req.candidate.is_some() {
+            Ok(MatchCandidateRequest {
+                target_id: req.target_id.unwrap(),
+                candidate: req.candidate.unwrap(),
             })
         } else {
             Err(())
