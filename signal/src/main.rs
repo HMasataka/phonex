@@ -4,7 +4,7 @@ mod message;
 
 use futures::stream::StreamExt;
 use message::RequestType;
-use r#match::{MatchRequest, MatchResponse, Server};
+use r#match::{MatchRequest, MatchRequestType, MatchResponse, Server};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{cell::Cell, net::SocketAddr};
@@ -120,8 +120,9 @@ impl Handler {
             RequestType::Register => {
                 self.request_sender
                     .send(MatchRequest {
-                        id: "1".to_string(),
-                        chan: self.response_sender,
+                        request_type: MatchRequestType::Register,
+                        id: Some("1".to_string()),
+                        chan: Some(self.response_sender),
                     })
                     .await
                     .unwrap();
