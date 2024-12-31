@@ -3,7 +3,10 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
 
-use crate::r#match::{MatchRegisterRequest, MatchRequest, MatchRequestType, MatchResponse};
+use crate::r#match::{
+    MatchCandidateRequest, MatchRegisterRequest, MatchRequest, MatchRequestType, MatchResponse,
+    MatchSessionDescriptionRequest,
+};
 
 pub struct Server {
     register_receiver: Cell<Receiver<MatchRequest>>,
@@ -37,8 +40,20 @@ impl Server {
                     self.response_channels.lock().await.push(v.chan);
                 }
             }
-            MatchRequestType::SessionDescription => {}
-            MatchRequestType::Candidate => {}
+            MatchRequestType::SessionDescription => {
+                let value: Result<MatchSessionDescriptionRequest, ()> = request.try_into();
+                if let Ok(v) = value {
+                    // TODO send sdp
+                    println!("{:?}", v)
+                }
+            }
+            MatchRequestType::Candidate => {
+                let value: Result<MatchCandidateRequest, ()> = request.try_into();
+                if let Ok(v) = value {
+                    // TODO send candidate
+                    println!("{:?}", v)
+                }
+            }
             MatchRequestType::None => {}
         }
     }

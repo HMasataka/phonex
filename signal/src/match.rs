@@ -49,6 +49,7 @@ impl MatchRequest {
     }
 }
 
+#[derive(Debug)]
 pub struct MatchRegisterRequest {
     pub id: String,
     pub chan: Sender<MatchResponse>,
@@ -69,6 +70,7 @@ impl TryFrom<MatchRequest> for MatchRegisterRequest {
     }
 }
 
+#[derive(Debug)]
 pub struct MatchSessionDescriptionRequest {
     pub target_id: String,
     pub sdp: RTCSessionDescription,
@@ -89,6 +91,7 @@ impl TryFrom<MatchRequest> for MatchSessionDescriptionRequest {
     }
 }
 
+#[derive(Debug)]
 pub struct MatchCandidateRequest {
     pub target_id: String,
     pub candidate: String,
