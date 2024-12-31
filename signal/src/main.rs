@@ -4,7 +4,7 @@ mod message;
 
 use futures::stream::StreamExt;
 use message::RequestType;
-use r#match::{MatchRequest, MatchResponse};
+use r#match::{MatchRequest, MatchResponse, Server};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{cell::Cell, net::SocketAddr};
@@ -34,9 +34,9 @@ lazy_static! {
 
 #[tokio::main]
 async fn main() -> Result<(), SpanErr<PhonexError>> {
-    let (tx, rx) = mpsc::channel::<r#match::MatchRequest>(100);
+    let (tx, rx) = mpsc::channel::<MatchRequest>(100);
 
-    let mut match_server = r#match::Server::new(Cell::new(rx));
+    let mut match_server = Server::new(Cell::new(rx));
 
     tokio::spawn(async move {
         match_server.serve().await;
@@ -119,7 +119,7 @@ impl Handler {
         match deserialized.typ {
             RequestType::Register => {
                 self.request_sender
-                    .send(r#match::MatchRequest {
+                    .send(MatchRequest {
                         id: "1".to_string(),
                         chan: self.response_sender,
                     })
