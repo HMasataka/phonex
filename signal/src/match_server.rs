@@ -48,7 +48,7 @@ impl Server {
                 println!("{:?}", value);
 
                 let m = self.response_channels.lock().await;
-                if m.contains_key(&value.target_id) {
+                if !m.contains_key(&value.target_id) {
                     return;
                 }
 
@@ -63,7 +63,7 @@ impl Server {
                 println!("{:?}", value);
 
                 let m = self.response_channels.lock().await;
-                if m.contains_key(&value.target_id) {
+                if !m.contains_key(&value.target_id) {
                     return;
                 }
 
