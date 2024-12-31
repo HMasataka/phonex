@@ -118,7 +118,7 @@ impl Handler {
     async fn string(self, message: String) {
         let deserialized: message::Message = serde_json::from_str(&message).unwrap();
 
-        match deserialized.typ {
+        match deserialized.request_type {
             RequestType::Register => {
                 self.request_sender
                     .send(MatchRequest {
