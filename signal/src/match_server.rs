@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
@@ -10,14 +11,14 @@ use crate::r#match::{
 
 pub struct Server {
     register_receiver: Cell<Receiver<MatchRequest>>,
-    response_channels: Arc<Mutex<Vec<Sender<MatchResponse>>>>,
+    response_channels: Arc<Mutex<HashMap<String, Sender<MatchResponse>>>>,
 }
 
 impl Server {
     pub fn new(rx: Cell<Receiver<MatchRequest>>) -> Self {
         Self {
             register_receiver: rx,
-            response_channels: Arc::new(Mutex::new(vec![])),
+            response_channels: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -37,7 +38,12 @@ impl Server {
             MatchRequestType::Register => {
                 let value: Result<MatchRegisterRequest, ()> = request.try_into();
                 if let Ok(v) = value {
-                    self.response_channels.lock().await.push(v.chan);
+                    let mut m = self.response_channels.lock().await;
+                    if m.contains_key(&v.id) {
+                        return;
+                    }
+
+                    m.insert(v.id, v.chan);
                 }
             }
             MatchRequestType::SessionDescription => {
