@@ -1,5 +1,8 @@
+mod message;
+
 use futures_util::stream::FuturesUnordered;
 use futures_util::{SinkExt, StreamExt};
+use serde::Serialize;
 use std::ops::ControlFlow;
 use std::time::Instant;
 use tokio_tungstenite::tungstenite::Utf8Bytes;
@@ -62,12 +65,10 @@ async fn spawn_client(who: usize) {
     //spawn an async sender to push some more messages into the server
     let mut send_task = tokio::spawn(async move {
         for i in 1..30 {
+            let m = register_message("1".into()).unwrap();
+
             // In any websocket error, break loop.
-            if sender
-                .send(Message::Text(format!("Message number {i}...").into()))
-                .await
-                .is_err()
-            {
+            if sender.send(Message::Text(m.into())).await.is_err() {
                 //just as with server, if send fails there is nothing we can do but exit.
                 return;
             }
@@ -107,6 +108,18 @@ async fn spawn_client(who: usize) {
             send_task.abort();
         }
     }
+}
+
+fn register_message(id: String) -> Result<String, serde_json::Error> {
+    let register_request = message::RegisterMessage { id };
+    let r = serde_json::to_string(&register_request)?;
+
+    let message = message::Message {
+        request_type: message::RequestType::Register,
+        raw: r,
+    };
+
+    return serde_json::to_string(&message);
 }
 
 fn process_message(msg: Message, who: usize) -> ControlFlow<(), ()> {
