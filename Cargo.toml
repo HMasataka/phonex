@@ -1,5 +1,5 @@
 [workspace]
-members = ["server", "client", "signal"]
+members = ["server", "client", "signal", "phonex"]
 resolver = "2"
 
 [workspace.dependencies]
