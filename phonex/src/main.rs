@@ -2,10 +2,10 @@ mod message;
 
 use futures_util::stream::FuturesUnordered;
 use futures_util::{SinkExt, StreamExt};
-use serde::Serialize;
 use std::ops::ControlFlow;
 use std::time::Instant;
 use tokio_tungstenite::tungstenite::Utf8Bytes;
+use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 // we will use tungstenite for websocket client impl (same library as what axum is using)
 use tokio_tungstenite::{
@@ -62,19 +62,26 @@ async fn spawn_client(who: usize) {
         .await
         .expect("Can not send!");
 
-    //spawn an async sender to push some more messages into the server
     let mut send_task = tokio::spawn(async move {
-        for i in 1..30 {
-            let m = register_message("1".into()).unwrap();
+        let m = register_message("1".into()).unwrap();
 
-            // In any websocket error, break loop.
-            if sender.send(Message::Text(m.into())).await.is_err() {
-                //just as with server, if send fails there is nothing we can do but exit.
-                return;
-            }
-
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        if sender.send(Message::Text(m.into())).await.is_err() {
+            return;
         }
+
+        let m = register_message("1".into()).unwrap();
+
+        if sender.send(Message::Text(m.into())).await.is_err() {
+            return;
+        }
+
+        let m = candidate_message("1".into(), "candidate".into()).unwrap();
+
+        if sender.send(Message::Text(m.into())).await.is_err() {
+            return;
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
 
         // When we are done we may want our client to close connection cleanly.
         println!("Sending close to {who}...");
@@ -111,11 +118,41 @@ async fn spawn_client(who: usize) {
 }
 
 fn register_message(id: String) -> Result<String, serde_json::Error> {
-    let register_request = message::RegisterMessage { id };
-    let r = serde_json::to_string(&register_request)?;
+    let register_message = message::RegisterMessage { id };
+    let r = serde_json::to_string(&register_message)?;
 
     let message = message::Message {
         request_type: message::RequestType::Register,
+        raw: r,
+    };
+
+    return serde_json::to_string(&message);
+}
+
+fn session_description_message(
+    target_id: String,
+    sdp: RTCSessionDescription,
+) -> Result<String, serde_json::Error> {
+    let session_description_message = message::SessionDescriptionMessage { target_id, sdp };
+    let r = serde_json::to_string(&session_description_message)?;
+
+    let message = message::Message {
+        request_type: message::RequestType::SessionDescription,
+        raw: r,
+    };
+
+    return serde_json::to_string(&message);
+}
+
+fn candidate_message(target_id: String, candidate: String) -> Result<String, serde_json::Error> {
+    let candidate_message = message::CandidateMessage {
+        target_id,
+        candidate,
+    };
+    let r = serde_json::to_string(&candidate_message)?;
+
+    let message = message::Message {
+        request_type: message::RequestType::Candidate,
         raw: r,
     };
 
