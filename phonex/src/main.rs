@@ -1,12 +1,25 @@
+mod err;
+
+use err::PhonexError;
 use futures_util::stream::FuturesUnordered;
 use futures_util::{SinkExt, StreamExt};
 use signal;
 use std::ops::ControlFlow;
+use std::sync::{Arc, Weak};
 use std::time::Instant;
 use tokio_tungstenite::tungstenite::Utf8Bytes;
+use tracing_spanned::SpanErr;
+use webrtc::api::interceptor_registry::register_default_interceptors;
+use webrtc::api::media_engine::MediaEngine;
+use webrtc::api::APIBuilder;
+use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
+use webrtc::ice_transport::ice_gatherer::OnLocalCandidateHdlrFn;
+use webrtc::ice_transport::ice_server::RTCIceServer;
+use webrtc::interceptor::registry::Registry;
+use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
+use webrtc::peer_connection::RTCPeerConnection;
 
-// we will use tungstenite for websocket client impl (same library as what axum is using)
 use tokio_tungstenite::{
     connect_async,
     tungstenite::protocol::{frame::coding::CloseCode, CloseFrame, Message},
@@ -15,13 +28,72 @@ use tokio_tungstenite::{
 const N_CLIENTS: usize = 2; //set to desired number
 const SERVER: &str = "ws://127.0.0.1:3000/ws";
 
+async fn initialize_peer_connection() -> Result<Arc<RTCPeerConnection>, SpanErr<PhonexError>> {
+    let config = RTCConfiguration {
+        ice_servers: vec![RTCIceServer {
+            urls: vec!["stun:stun.l.google.com:19302".to_owned()],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    let mut m = MediaEngine::default();
+    m.register_default_codecs()
+        .map_err(PhonexError::InitializeRegistry)?;
+
+    let mut registry = Registry::new();
+    registry =
+        register_default_interceptors(registry, &mut m).map_err(PhonexError::InitializeRegistry)?;
+
+    let api = APIBuilder::new()
+        .with_media_engine(m)
+        .with_interceptor_registry(registry)
+        .build();
+
+    let peer_connection = Arc::new(
+        api.new_peer_connection(config)
+            .await
+            .map_err(PhonexError::CreateNewPeerConnection)?,
+    );
+
+    Ok(peer_connection)
+}
+
+fn on_ice_candidate() -> Result<OnLocalCandidateHdlrFn, SpanErr<PhonexError>> {
+    Ok(Box::new(move |c: Option<RTCIceCandidate>| {
+        println!("on ice candidate: {:?}", c);
+
+        Box::pin(async move {
+            if let Some(candidate) = c {
+                // TODO send candidate
+            }
+        })
+    }))
+}
+
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), SpanErr<PhonexError>> {
     let start_time = Instant::now();
     //spawn several clients that will concurrently talk to the server
     let mut clients = (0..N_CLIENTS)
         .map(|cli| tokio::spawn(spawn_client(cli)))
         .collect::<FuturesUnordered<_>>();
+
+    let peer_connection = initialize_peer_connection().await?;
+
+    peer_connection.on_ice_candidate(on_ice_candidate()?);
+
+    let offer = peer_connection
+        .create_offer(None)
+        .await
+        .map_err(PhonexError::CreateNewOffer)?;
+
+    peer_connection
+        .set_local_description(offer.clone())
+        .await
+        .map_err(PhonexError::SetLocalDescription)?;
+
+    // TODO send offer
 
     //wait for all our clients to exit
     while clients.next().await.is_some() {}
@@ -33,6 +105,10 @@ async fn main() {
         "Total time taken {:#?} with {N_CLIENTS} concurrent clients, should be about 6.45 seconds.",
         end_time - start_time
     );
+
+    peer_connection.close().await.unwrap();
+
+    Ok(())
 }
 
 //creates a client. quietly exits on failure.
