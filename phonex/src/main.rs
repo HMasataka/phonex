@@ -1,121 +1,147 @@
-use std::io::stdin;
-use std::sync::mpsc::channel;
-use std::thread;
+use futures_util::stream::FuturesUnordered;
+use futures_util::{SinkExt, StreamExt};
+use std::ops::ControlFlow;
+use std::time::Instant;
+use tokio_tungstenite::tungstenite::Utf8Bytes;
 
-use websocket::client::ClientBuilder;
-use websocket::{Message, OwnedMessage};
+// we will use tungstenite for websocket client impl (same library as what axum is using)
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::protocol::{frame::coding::CloseCode, CloseFrame, Message},
+};
 
-const CONNECTION: &'static str = "ws://127.0.0.1:3000/ws";
+const N_CLIENTS: usize = 2; //set to desired number
+const SERVER: &str = "ws://127.0.0.1:3000/ws";
 
-fn main() {
-    println!("Connecting to {}", CONNECTION);
+#[tokio::main]
+async fn main() {
+    let start_time = Instant::now();
+    //spawn several clients that will concurrently talk to the server
+    let mut clients = (0..N_CLIENTS)
+        .map(|cli| tokio::spawn(spawn_client(cli)))
+        .collect::<FuturesUnordered<_>>();
 
-    let client = ClientBuilder::new(CONNECTION)
-        .unwrap()
-        .add_protocol("rust-websocket")
-        .connect_insecure()
-        .unwrap();
+    //wait for all our clients to exit
+    while clients.next().await.is_some() {}
 
-    println!("Successfully connected");
+    let end_time = Instant::now();
 
-    let (mut receiver, mut sender) = client.split().unwrap();
+    //total time should be the same no matter how many clients we spawn
+    println!(
+        "Total time taken {:#?} with {N_CLIENTS} concurrent clients, should be about 6.45 seconds.",
+        end_time - start_time
+    );
+}
 
-    let (tx, rx) = channel();
-
-    let tx_1 = tx.clone();
-
-    let send_loop = thread::spawn(move || {
-        loop {
-            // Send loop
-            let message = match rx.recv() {
-                Ok(m) => m,
-                Err(e) => {
-                    println!("Send Loop: {:?}", e);
-                    return;
-                }
-            };
-            match message {
-                OwnedMessage::Close(_) => {
-                    let _ = sender.send_message(&message);
-                    // If it's a close message, just send it and then return.
-                    return;
-                }
-                _ => (),
-            }
-            // Send the message
-            match sender.send_message(&message) {
-                Ok(()) => (),
-                Err(e) => {
-                    println!("Send Loop: {:?}", e);
-                    let _ = sender.send_message(&Message::close());
-                    return;
-                }
-            }
+//creates a client. quietly exits on failure.
+async fn spawn_client(who: usize) {
+    let ws_stream = match connect_async(SERVER).await {
+        Ok((stream, response)) => {
+            println!("Handshake for client {who} has been completed");
+            // This will be the HTTP response, same as with server this is the last moment we
+            // can still access HTTP stuff.
+            println!("Server response was {response:?}");
+            stream
         }
-    });
-
-    let receive_loop = thread::spawn(move || {
-        // Receive loop
-        for message in receiver.incoming_messages() {
-            let message = match message {
-                Ok(m) => m,
-                Err(e) => {
-                    println!("Receive Loop: {:?}", e);
-                    let _ = tx_1.send(OwnedMessage::Close(None));
-                    return;
-                }
-            };
-            match message {
-                OwnedMessage::Close(_) => {
-                    // Got a close message, so send a close message and return
-                    let _ = tx_1.send(OwnedMessage::Close(None));
-                    return;
-                }
-                OwnedMessage::Ping(data) => {
-                    match tx_1.send(OwnedMessage::Pong(data)) {
-                        // Send a pong in response
-                        Ok(()) => (),
-                        Err(e) => {
-                            println!("Receive Loop: {:?}", e);
-                            return;
-                        }
-                    }
-                }
-                // Say what we received
-                _ => println!("Receive Loop: {:?}", message),
-            }
+        Err(e) => {
+            println!("WebSocket handshake for client {who} failed with {e}!");
+            return;
         }
-    });
+    };
 
-    loop {
-        let mut input = String::new();
+    let (mut sender, mut receiver) = ws_stream.split();
 
-        stdin().read_line(&mut input).unwrap();
+    //we can ping the server for start
+    sender
+        .send(Message::Ping(axum::body::Bytes::from_static(
+            b"Hello, Server!",
+        )))
+        .await
+        .expect("Can not send!");
 
-        let trimmed = input.trim();
-
-        let message = match trimmed {
-            "/close" => {
-                let _ = tx.send(OwnedMessage::Close(None));
-                break;
+    //spawn an async sender to push some more messages into the server
+    let mut send_task = tokio::spawn(async move {
+        for i in 1..30 {
+            // In any websocket error, break loop.
+            if sender
+                .send(Message::Text(format!("Message number {i}...").into()))
+                .await
+                .is_err()
+            {
+                //just as with server, if send fails there is nothing we can do but exit.
+                return;
             }
-            "/ping" => OwnedMessage::Ping(b"PING".to_vec()),
-            _ => OwnedMessage::Text(trimmed.to_string()),
+
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        }
+
+        // When we are done we may want our client to close connection cleanly.
+        println!("Sending close to {who}...");
+        if let Err(e) = sender
+            .send(Message::Close(Some(CloseFrame {
+                code: CloseCode::Normal,
+                reason: Utf8Bytes::from_static("Goodbye"),
+            })))
+            .await
+        {
+            println!("Could not send Close due to {e:?}, probably it is ok?");
         };
+    });
 
-        match tx.send(message) {
-            Ok(()) => (),
-            Err(e) => {
-                println!("Main Loop: {:?}", e);
+    //receiver just prints whatever it gets
+    let mut recv_task = tokio::spawn(async move {
+        while let Some(Ok(msg)) = receiver.next().await {
+            // print message and break if instructed to do so
+            if process_message(msg, who).is_break() {
                 break;
             }
+        }
+    });
+
+    //wait for either task to finish and kill the other task
+    tokio::select! {
+        _ = (&mut send_task) => {
+            recv_task.abort();
+        },
+        _ = (&mut recv_task) => {
+            send_task.abort();
         }
     }
+}
 
-    println!("Waiting for child threads to exit");
+fn process_message(msg: Message, who: usize) -> ControlFlow<(), ()> {
+    match msg {
+        Message::Text(t) => {
+            println!(">>> {who} got str: {t:?}");
+        }
+        Message::Binary(d) => {
+            println!(">>> {} got {} bytes: {:?}", who, d.len(), d);
+        }
+        Message::Close(c) => {
+            if let Some(cf) = c {
+                println!(
+                    ">>> {} got close with code {} and reason `{}`",
+                    who, cf.code, cf.reason
+                );
+            } else {
+                println!(">>> {who} somehow got close message without CloseFrame");
+            }
+            return ControlFlow::Break(());
+        }
 
-    let _ = send_loop.join();
-    let _ = receive_loop.join();
+        Message::Pong(v) => {
+            println!(">>> {who} got pong with {v:?}");
+        }
+        // Just as with axum server, the underlying tungstenite websocket library
+        // will handle Ping for you automagically by replying with Pong and copying the
+        // v according to spec. But if you need the contents of the pings you can see them here.
+        Message::Ping(v) => {
+            println!(">>> {who} got ping with {v:?}");
+        }
 
-    println!("Exited");
+        Message::Frame(_) => {
+            unreachable!("This is never supposed to happen")
+        }
+    }
+    ControlFlow::Continue(())
 }
