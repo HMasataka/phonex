@@ -1,13 +1,12 @@
 mod err;
 mod r#match;
 mod match_server;
-mod message;
 
 use futures::stream::{SplitSink, StreamExt};
 use futures::SinkExt;
 use match_server::Server;
-use message::RequestType;
 use r#match::{MatchRegisterRequest, MatchRequest, MatchResponse};
+use signal::RequestType;
 use std::sync::Arc;
 use std::{cell::Cell, net::SocketAddr};
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -116,11 +115,11 @@ impl RequestHandler {
     }
 
     async fn string(self, message: String) {
-        let deserialized: message::Message = serde_json::from_str(&message).unwrap();
+        let deserialized: signal::Message = serde_json::from_str(&message).unwrap();
 
         match deserialized.request_type {
             RequestType::Register => {
-                let register_message: message::RegisterMessage =
+                let register_message: signal::RegisterMessage =
                     serde_json::from_str(&deserialized.raw).unwrap();
 
                 self.request_sender
@@ -132,7 +131,7 @@ impl RequestHandler {
                     .unwrap();
             }
             RequestType::SessionDescription => {
-                let session_description_message: message::SessionDescriptionMessage =
+                let session_description_message: signal::SessionDescriptionMessage =
                     serde_json::from_str(&deserialized.raw).unwrap();
 
                 self.request_sender
@@ -143,7 +142,7 @@ impl RequestHandler {
                     .unwrap();
             }
             RequestType::Candidate => {
-                let candidate_message: message::CandidateMessage =
+                let candidate_message: signal::CandidateMessage =
                     serde_json::from_str(&deserialized.raw).unwrap();
 
                 self.request_sender

@@ -1743,6 +1743,7 @@ dependencies = [
  "futures-util",
  "serde",
  "serde_json",
+ "signal",
  "tokio",
  "tokio-tungstenite 0.26.1",
  "webrtc 0.12.0",
@@ -2338,7 +2339,7 @@ dependencies = [
  "tracing-error",
  "tracing-subscriber",
  "tracing_spanned",
- "webrtc 0.11.0",
+ "webrtc 0.12.0",
 ]
 
 [[package]]

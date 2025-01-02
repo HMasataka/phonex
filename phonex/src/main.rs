@@ -1,7 +1,6 @@
-mod message;
-
 use futures_util::stream::FuturesUnordered;
 use futures_util::{SinkExt, StreamExt};
+use signal;
 use std::ops::ControlFlow;
 use std::time::Instant;
 use tokio_tungstenite::tungstenite::Utf8Bytes;
@@ -118,11 +117,11 @@ async fn spawn_client(who: usize) {
 }
 
 fn register_message(id: String) -> Result<String, serde_json::Error> {
-    let register_message = message::RegisterMessage { id };
+    let register_message = signal::RegisterMessage { id };
     let r = serde_json::to_string(&register_message)?;
 
-    let message = message::Message {
-        request_type: message::RequestType::Register,
+    let message = signal::Message {
+        request_type: signal::RequestType::Register,
         raw: r,
     };
 
@@ -133,11 +132,11 @@ fn session_description_message(
     target_id: String,
     sdp: RTCSessionDescription,
 ) -> Result<String, serde_json::Error> {
-    let session_description_message = message::SessionDescriptionMessage { target_id, sdp };
+    let session_description_message = signal::SessionDescriptionMessage { target_id, sdp };
     let r = serde_json::to_string(&session_description_message)?;
 
-    let message = message::Message {
-        request_type: message::RequestType::SessionDescription,
+    let message = signal::Message {
+        request_type: signal::RequestType::SessionDescription,
         raw: r,
     };
 
@@ -145,14 +144,14 @@ fn session_description_message(
 }
 
 fn candidate_message(target_id: String, candidate: String) -> Result<String, serde_json::Error> {
-    let candidate_message = message::CandidateMessage {
+    let candidate_message = signal::CandidateMessage {
         target_id,
         candidate,
     };
     let r = serde_json::to_string(&candidate_message)?;
 
-    let message = message::Message {
-        request_type: message::RequestType::Candidate,
+    let message = signal::Message {
+        request_type: signal::RequestType::Candidate,
         raw: r,
     };
 

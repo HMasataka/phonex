@@ -1,7 +1,7 @@
 use tokio::sync::mpsc::Sender;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-use crate::message::{CandidateMessage, SessionDescriptionMessage};
+use signal::{CandidateMessage, SessionDescriptionMessage};
 
 #[derive(Debug)]
 pub enum MatchRequest {

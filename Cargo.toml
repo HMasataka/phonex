@@ -1,3 +1,6 @@
 [workspace]
 members = ["server", "client", "signal", "phonex"]
 resolver = "2"
+
+[workspace.dependencies]
+webrtc = "0.12.0"
