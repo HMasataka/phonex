@@ -8,7 +8,6 @@ use futures::SinkExt;
 use match_server::Server;
 use message::RequestType;
 use r#match::{MatchRegisterRequest, MatchRequest, MatchResponse};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{cell::Cell, net::SocketAddr};
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -66,11 +65,6 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
 
 async fn hello_world() -> Html<&'static str> {
     Html("<h1>Hello, World!</h1>")
-}
-
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
-pub struct CandidateRequest {
-    pub candidate: String,
 }
 
 async fn upgrade_to_websocket(
