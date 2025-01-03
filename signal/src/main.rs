@@ -6,7 +6,7 @@ use futures::stream::{SplitSink, StreamExt};
 use futures::SinkExt;
 use match_server::Server;
 use r#match::{MatchRegisterRequest, MatchRequest, MatchResponse};
-use signal::RequestType;
+use signal::{CandidateMessage, RequestType, SessionDescriptionMessage};
 use std::sync::Arc;
 use std::{cell::Cell, net::SocketAddr};
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -187,12 +187,46 @@ impl ResponseHandler {
         loop {
             tokio::select! {
                 val = self.response_receiver.get_mut().recv() => {
-                    let response = val.unwrap();
-                    println!("{:?}", response);
+                    let value = val.unwrap();
 
-                    self.ws.send(Message::Text(format!("message").into())).await.unwrap();
+                    match value{
+                        MatchResponse::SessionDescription(value) => {
+                            println!("{:?}", value);
+
+                            let raw = SessionDescriptionMessage{
+                                target_id: "".into(),
+                                sdp: value.sdp,
+                            };
+
+                            let response =signal::Message{
+                                request_type: RequestType::SessionDescription,
+                                raw: serde_json::to_string(&raw).unwrap(),
+                            };
+
+                            let text = serde_json::to_string(&response).unwrap();
+
+                            self.ws.send(Message::Text(text.into())).await.unwrap();
+                        }
+                        MatchResponse::Candidate(value) => {
+                            println!("{:?}", value);
+
+                            let raw = CandidateMessage{
+                                target_id: "".into(),
+                                candidate: value.candidate,
+                            };
+
+                            let response =signal::Message{
+                                request_type: RequestType::SessionDescription,
+                                raw: serde_json::to_string(&raw).unwrap(),
+                            };
+
+                            let text = serde_json::to_string(&response).unwrap();
+
+                            self.ws.send(Message::Text(text.into())).await.unwrap();
+                        }
+                    }
                 }
-            };
+            }
         }
     }
 }
