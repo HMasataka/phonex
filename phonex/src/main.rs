@@ -1,25 +1,22 @@
 mod err;
+mod message;
+mod wrc;
 
 use err::PhonexError;
 use futures_util::{SinkExt, StreamExt};
+use message::{CandidateRequest, SessionDescriptionRequest};
+use message::{HandshakeRequest, HandshakeResponse};
 use signal;
+use signal::RequestType;
+use std::cell::Cell;
 use std::ops::ControlFlow;
-use std::sync::Arc;
-use std::sync::Weak;
 use std::time::Instant;
-use tokio::sync::Mutex;
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::Sender;
 use tokio_tungstenite::tungstenite::Utf8Bytes;
 use tracing_spanned::SpanErr;
-use webrtc::api::interceptor_registry::register_default_interceptors;
-use webrtc::api::media_engine::MediaEngine;
-use webrtc::api::APIBuilder;
-use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
-use webrtc::ice_transport::ice_gatherer::OnLocalCandidateHdlrFn;
-use webrtc::ice_transport::ice_server::RTCIceServer;
-use webrtc::interceptor::registry::Registry;
-use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use webrtc::peer_connection::RTCPeerConnection;
 
 use tokio_tungstenite::{
     connect_async,
@@ -28,101 +25,30 @@ use tokio_tungstenite::{
 
 const SERVER: &str = "ws://127.0.0.1:3000/ws";
 
-async fn initialize_peer_connection() -> Result<Arc<RTCPeerConnection>, SpanErr<PhonexError>> {
-    let config = RTCConfiguration {
-        ice_servers: vec![RTCIceServer {
-            urls: vec!["stun:stun.l.google.com:19302".to_owned()],
-            ..Default::default()
-        }],
-        ..Default::default()
-    };
-
-    let mut m = MediaEngine::default();
-    m.register_default_codecs()
-        .map_err(PhonexError::InitializeRegistry)?;
-
-    let mut registry = Registry::new();
-    registry =
-        register_default_interceptors(registry, &mut m).map_err(PhonexError::InitializeRegistry)?;
-
-    let api = APIBuilder::new()
-        .with_media_engine(m)
-        .with_interceptor_registry(registry)
-        .build();
-
-    let peer_connection = Arc::new(
-        api.new_peer_connection(config)
-            .await
-            .map_err(PhonexError::CreateNewPeerConnection)?,
-    );
-
-    Ok(peer_connection)
-}
-
-fn on_ice_candidate(
-    peer_connection: Weak<RTCPeerConnection>,
-    pending_candidates: Arc<Mutex<Vec<RTCIceCandidate>>>,
-) -> Result<OnLocalCandidateHdlrFn, SpanErr<PhonexError>> {
-    Ok(Box::new(move |c: Option<RTCIceCandidate>| {
-        println!("on ice candidate: {:?}", c);
-
-        let peer_connection = peer_connection.clone();
-        let pending_candidates = Arc::clone(&pending_candidates);
-
-        Box::pin(async move {
-            if let Some(candidate) = c {
-                if let Some(pc) = peer_connection.upgrade() {
-                    let desc = pc.remote_description().await;
-                    if desc.is_none() {
-                        let mut cs = pending_candidates.lock().await;
-                        cs.push(candidate);
-                    } else {
-                        // TODO send candidate
-                    }
-                }
-            }
-        })
-    }))
-}
-
 #[tokio::main]
 async fn main() -> Result<(), SpanErr<PhonexError>> {
     let start_time = Instant::now();
-    let pending_candidates: Arc<Mutex<Vec<RTCIceCandidate>>> = Arc::new(Mutex::new(vec![]));
+    let (req_tx, req_rx) = mpsc::channel::<HandshakeRequest>(100);
+    let (res_tx, res_rx) = mpsc::channel::<HandshakeResponse>(100);
 
-    let websocket_task = tokio::spawn(spawn_client());
+    let mut wrc = wrc::WebRTC::new(Cell::new(req_rx), res_tx).await?;
 
-    let peer_connection = initialize_peer_connection().await?;
-
-    peer_connection.on_ice_candidate(on_ice_candidate(
-        Arc::downgrade(&peer_connection),
-        pending_candidates,
-    )?);
-
-    let offer = peer_connection
-        .create_offer(None)
-        .await
-        .map_err(PhonexError::CreateNewOffer)?;
-
-    peer_connection
-        .set_local_description(offer.clone())
-        .await
-        .map_err(PhonexError::SetLocalDescription)?;
-
-    // TODO send offer
+    let webrtc_task = tokio::spawn(async move { wrc.handshake().await });
+    let websocket_task = tokio::spawn(spawn_websocket(req_tx, res_rx));
 
     let _ = websocket_task.await;
+    let _ = webrtc_task.await;
 
     let end_time = Instant::now();
 
     println!("Total time taken {:#?}", end_time - start_time);
 
-    peer_connection.close().await.unwrap();
+    // wrc.close_connection().await;
 
     Ok(())
 }
 
-async fn spawn_client() {
+async fn spawn_websocket(tx: Sender<HandshakeRequest>, mut rx: Receiver<HandshakeResponse>) {
     let ws_stream = match connect_async(SERVER).await {
         Ok((stream, response)) => {
             println!("Handshake has been completed");
@@ -152,21 +78,6 @@ async fn spawn_client() {
             return;
         }
 
-        let m = register_message("1".into()).unwrap();
-
-        if sender.send(Message::Text(m.into())).await.is_err() {
-            return;
-        }
-
-        let m = candidate_message("1".into(), "candidate".into()).unwrap();
-
-        if sender.send(Message::Text(m.into())).await.is_err() {
-            return;
-        }
-
-        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-
-        // When we are done we may want our client to close connection cleanly.
         if let Err(e) = sender
             .send(Message::Close(Some(CloseFrame {
                 code: CloseCode::Normal,
@@ -176,19 +87,46 @@ async fn spawn_client() {
         {
             println!("Could not send Close due to {e:?}, probably it is ok?");
         };
+
+        loop {
+            tokio::select! {
+                val = rx.recv()=> {
+                    let response = val.unwrap();
+                    match response {
+                        HandshakeResponse::SessionDescriptionResponse(v) => {
+                            let m = session_description_message("1".into(),v.sdp).unwrap();
+
+                            if let Err(e) = sender
+                                .send(Message::Text(m.into()))
+                                .await
+                            {
+                                println!("Could not send Close due to {e:?}, probably it is ok?");
+                            };
+                        }
+                        HandshakeResponse::CandidateResponse(v) => {
+                            let m = candidate_message("1".into(),v.candidate).unwrap();
+
+                            if let Err(e) = sender
+                                .send(Message::Text(m.into()))
+                                .await
+                            {
+                                println!("Could not send Close due to {e:?}, probably it is ok?");
+                            };
+                        }
+                    }
+                }
+            }
+        }
     });
 
-    //receiver just prints whatever it gets
     let mut recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
-            // print message and break if instructed to do so
-            if process_message(msg).is_break() {
+            if process_message(tx.clone(), msg).await.is_break() {
                 break;
             }
         }
     });
 
-    //wait for either task to finish and kill the other task
     tokio::select! {
         _ = (&mut send_task) => {
             recv_task.abort();
@@ -241,10 +179,46 @@ fn candidate_message(target_id: String, candidate: String) -> Result<String, ser
     return serde_json::to_string(&message);
 }
 
-fn process_message(msg: Message) -> ControlFlow<(), ()> {
+async fn process_message(tx: Sender<HandshakeRequest>, msg: Message) -> ControlFlow<(), ()> {
     match msg {
-        Message::Text(t) => {
-            println!(">>> got str: {t:?}");
+        Message::Text(message) => {
+            let deserialized: signal::Message = serde_json::from_str(&message).unwrap();
+
+            match deserialized.request_type {
+                RequestType::Register => {}
+                RequestType::SessionDescription => {
+                    let session_description_message: signal::SessionDescriptionMessage =
+                        serde_json::from_str(&deserialized.raw).unwrap();
+
+                    tx.send(HandshakeRequest::SessionDescriptionRequest(
+                        SessionDescriptionRequest {
+                            target_id: session_description_message.target_id,
+                            sdp: session_description_message.sdp,
+                        },
+                    ))
+                    .await
+                    .unwrap();
+                }
+                RequestType::Candidate => {
+                    let candidate_message: signal::CandidateMessage =
+                        serde_json::from_str(&deserialized.raw).unwrap();
+
+                    tx.send(HandshakeRequest::CandidateRequest(CandidateRequest {
+                        target_id: candidate_message.target_id,
+                        candidate: candidate_message.candidate,
+                    }))
+                    .await
+                    .unwrap();
+                }
+                RequestType::Ping => {
+                    println!(">>> receive ping");
+                }
+                RequestType::Pong => {
+                    println!(">>> sent pong");
+                }
+            }
+
+            println!("{:?}", deserialized);
         }
         Message::Binary(d) => {
             println!(">>> got {} bytes: {:?}", d.len(), d);
