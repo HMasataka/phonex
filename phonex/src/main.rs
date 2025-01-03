@@ -5,7 +5,9 @@ use futures_util::{SinkExt, StreamExt};
 use signal;
 use std::ops::ControlFlow;
 use std::sync::Arc;
+use std::sync::Weak;
 use std::time::Instant;
+use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Utf8Bytes;
 use tracing_spanned::SpanErr;
 use webrtc::api::interceptor_registry::register_default_interceptors;
@@ -24,7 +26,6 @@ use tokio_tungstenite::{
     tungstenite::protocol::{frame::coding::CloseCode, CloseFrame, Message},
 };
 
-const N_CLIENTS: usize = 2; //set to desired number
 const SERVER: &str = "ws://127.0.0.1:3000/ws";
 
 async fn initialize_peer_connection() -> Result<Arc<RTCPeerConnection>, SpanErr<PhonexError>> {
@@ -58,13 +59,27 @@ async fn initialize_peer_connection() -> Result<Arc<RTCPeerConnection>, SpanErr<
     Ok(peer_connection)
 }
 
-fn on_ice_candidate() -> Result<OnLocalCandidateHdlrFn, SpanErr<PhonexError>> {
+fn on_ice_candidate(
+    peer_connection: Weak<RTCPeerConnection>,
+    pending_candidates: Arc<Mutex<Vec<RTCIceCandidate>>>,
+) -> Result<OnLocalCandidateHdlrFn, SpanErr<PhonexError>> {
     Ok(Box::new(move |c: Option<RTCIceCandidate>| {
         println!("on ice candidate: {:?}", c);
 
+        let peer_connection = peer_connection.clone();
+        let pending_candidates = Arc::clone(&pending_candidates);
+
         Box::pin(async move {
             if let Some(candidate) = c {
-                // TODO send candidate
+                if let Some(pc) = peer_connection.upgrade() {
+                    let desc = pc.remote_description().await;
+                    if desc.is_none() {
+                        let mut cs = pending_candidates.lock().await;
+                        cs.push(candidate);
+                    } else {
+                        // TODO send candidate
+                    }
+                }
             }
         })
     }))
@@ -73,12 +88,16 @@ fn on_ice_candidate() -> Result<OnLocalCandidateHdlrFn, SpanErr<PhonexError>> {
 #[tokio::main]
 async fn main() -> Result<(), SpanErr<PhonexError>> {
     let start_time = Instant::now();
+    let pending_candidates: Arc<Mutex<Vec<RTCIceCandidate>>> = Arc::new(Mutex::new(vec![]));
 
     let websocket_task = tokio::spawn(spawn_client());
 
     let peer_connection = initialize_peer_connection().await?;
 
-    peer_connection.on_ice_candidate(on_ice_candidate()?);
+    peer_connection.on_ice_candidate(on_ice_candidate(
+        Arc::downgrade(&peer_connection),
+        pending_candidates,
+    )?);
 
     let offer = peer_connection
         .create_offer(None)
@@ -103,7 +122,6 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
     Ok(())
 }
 
-//creates a client. quietly exits on failure.
 async fn spawn_client() {
     let ws_stream = match connect_async(SERVER).await {
         Ok((stream, response)) => {
