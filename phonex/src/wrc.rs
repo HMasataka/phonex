@@ -212,6 +212,25 @@ impl WebRTC {
                     return ControlFlow::Break(());
                 }
 
+                if self.peer_connection.local_description().await.is_none() {
+                    let answer = self.peer_connection.create_answer(None).await.unwrap();
+
+                    self.tx
+                        .send(HandshakeResponse::SessionDescriptionResponse(
+                            SessionDescriptionResponse {
+                                target_id: TARGET.into(),
+                                sdp: answer.clone(),
+                            },
+                        ))
+                        .await
+                        .unwrap();
+
+                    self.peer_connection
+                        .set_local_description(answer)
+                        .await
+                        .unwrap();
+                }
+
                 let pending_candidates = self.pending_candidates.lock().await;
                 for candidate in &*pending_candidates {
                     let req = candidate.to_json().unwrap();
