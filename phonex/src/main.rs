@@ -177,6 +177,8 @@ async fn process_message(tx: Sender<HandshakeRequest>, msg: Message) -> ControlF
                     let session_description_message: signal::SessionDescriptionMessage =
                         serde_json::from_str(&deserialized.raw).unwrap();
 
+                    println!("sdp: {:?}", session_description_message.sdp.unmarshal());
+
                     tx.send(HandshakeRequest::SessionDescriptionRequest(
                         SessionDescriptionRequest {
                             target_id: session_description_message.target_id,

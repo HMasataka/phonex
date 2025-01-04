@@ -8,16 +8,19 @@ use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
+use tokio::time::Duration;
 use tracing_spanned::SpanErr;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
+use webrtc::data_channel::data_channel_message::DataChannelMessage;
+use webrtc::data_channel::{OnMessageHdlrFn, OnOpenHdlrFn, RTCDataChannel};
 use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
 use webrtc::ice_transport::ice_gatherer::OnLocalCandidateHdlrFn;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
-use webrtc::peer_connection::RTCPeerConnection;
+use webrtc::peer_connection::{math_rand_alpha, RTCPeerConnection};
 
 const TARGET: &str = "1";
 
@@ -92,6 +95,40 @@ fn on_ice_candidate(
     }))
 }
 
+fn on_open(data_channel: Arc<RTCDataChannel>) -> Result<OnOpenHdlrFn, SpanErr<PhonexError>> {
+    Ok(Box::new(move || {
+        println!("Data channel '{}'-'{}' open. Random messages will now be sent to any connected DataChannels every 5 seconds", data_channel.label(), data_channel.id());
+
+        let dc = Arc::clone(&data_channel);
+        Box::pin(async move {
+            let mut result = Result::<usize, PhonexError>::Ok(0);
+
+            while result.is_ok() {
+                let timeout = tokio::time::sleep(Duration::from_secs(5));
+                tokio::pin!(timeout);
+
+                tokio::select! {
+                    _ = timeout.as_mut() =>{
+                        let message = math_rand_alpha(15);
+                        println!("Sending '{message}'");
+                        result = dc.send_text(message).await.map_err(PhonexError::SendMessage);
+                    }
+                };
+            }
+        })
+    }))
+}
+
+fn on_message(data_channel_label: String) -> Result<OnMessageHdlrFn, SpanErr<PhonexError>> {
+    Ok(Box::new(move |msg: DataChannelMessage| {
+        let msg_str = String::from_utf8(msg.data.to_vec())
+            .map_err(PhonexError::ConvertByteToString)
+            .unwrap();
+        println!("Message from DataChannel '{data_channel_label}': '{msg_str}'");
+        Box::pin(async {})
+    }))
+}
+
 impl WebRTC {
     pub async fn new(
         rx: Cell<Receiver<HandshakeRequest>>,
@@ -117,6 +154,16 @@ impl WebRTC {
             Arc::clone(&self.pending_candidates),
         )?);
 
+        let data_channel = pc
+            .create_data_channel("data", None)
+            .await
+            .map_err(PhonexError::CreateNewDataChannel)?;
+
+        data_channel.on_open(on_open(Arc::clone(&data_channel))?);
+        data_channel.on_message(on_message(data_channel.label().to_owned())?);
+
+        self.offer().await?;
+
         loop {
             tokio::select! {
                 val = self.rx.get_mut().recv()=> {
@@ -131,7 +178,7 @@ impl WebRTC {
         Ok(())
     }
 
-    async fn offer(self) -> Result<(), SpanErr<PhonexError>> {
+    async fn offer(&mut self) -> Result<(), SpanErr<PhonexError>> {
         let offer = self
             .peer_connection
             .create_offer(None)
@@ -161,6 +208,7 @@ impl WebRTC {
             HandshakeRequest::SessionDescriptionRequest(v) => {
                 let v = self.peer_connection.set_remote_description(v.sdp).await;
                 if v.is_err() {
+                    println!("set_remote_description err: {:?}", v.err());
                     return ControlFlow::Break(());
                 }
 
