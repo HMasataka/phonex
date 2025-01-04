@@ -23,6 +23,7 @@ use tokio_tungstenite::{
     tungstenite::protocol::{frame::coding::CloseCode, CloseFrame, Message},
 };
 
+const TARGET: &str = "1";
 const SERVER: &str = "ws://127.0.0.1:3000/ws";
 
 #[tokio::main]
@@ -72,7 +73,7 @@ async fn spawn_websocket(tx: Sender<HandshakeRequest>, mut rx: Receiver<Handshak
         .expect("Can not send!");
 
     let mut send_task = tokio::spawn(async move {
-        let m = register_message("1".into()).unwrap();
+        let m = register_message(TARGET.into()).unwrap();
 
         if sender.send(Message::Text(m.into())).await.is_err() {
             return;
@@ -238,9 +239,6 @@ async fn process_message(tx: Sender<HandshakeRequest>, msg: Message) -> ControlF
         Message::Pong(v) => {
             println!(">>> got pong with {v:?}");
         }
-        // Just as with axum server, the underlying tungstenite websocket library
-        // will handle Ping for you automagically by replying with Pong and copying the
-        // v according to spec. But if you need the contents of the pings you can see them here.
         Message::Ping(v) => {
             println!(">>> got ping with {v:?}");
         }

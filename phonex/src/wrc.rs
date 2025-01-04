@@ -19,6 +19,8 @@ use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::RTCPeerConnection;
 
+const TARGET: &str = "1";
+
 pub struct WebRTC {
     rx: Cell<Receiver<HandshakeRequest>>,
     tx: Sender<HandshakeResponse>,
@@ -144,7 +146,7 @@ impl WebRTC {
         self.tx
             .send(HandshakeResponse::SessionDescriptionResponse(
                 SessionDescriptionResponse {
-                    target_id: "1".into(),
+                    target_id: TARGET.into(),
                     sdp: offer,
                 },
             ))
@@ -168,7 +170,7 @@ impl WebRTC {
 
                     self.tx
                         .send(HandshakeResponse::CandidateResponse(CandidateResponse {
-                            target_id: "1".into(),
+                            target_id: TARGET.into(),
                             candidate: req.candidate,
                         }))
                         .await
