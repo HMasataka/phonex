@@ -216,7 +216,7 @@ impl ResponseHandler {
                             };
 
                             let response = signal::Message{
-                                request_type: RequestType::SessionDescription,
+                                request_type: RequestType::Candidate,
                                 raw: serde_json::to_string(&raw).unwrap(),
                             };
 
