@@ -14,14 +14,10 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
-use tokio_tungstenite::tungstenite::Utf8Bytes;
 use tracing_spanned::SpanErr;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-use tokio_tungstenite::{
-    connect_async,
-    tungstenite::protocol::{frame::coding::CloseCode, CloseFrame, Message},
-};
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
 const TARGET: &str = "1";
 const SERVER: &str = "ws://127.0.0.1:3000/ws";
@@ -78,16 +74,6 @@ async fn spawn_websocket(tx: Sender<HandshakeRequest>, mut rx: Receiver<Handshak
         if sender.send(Message::Text(m.into())).await.is_err() {
             return;
         }
-
-        if let Err(e) = sender
-            .send(Message::Close(Some(CloseFrame {
-                code: CloseCode::Normal,
-                reason: Utf8Bytes::from_static("Goodbye"),
-            })))
-            .await
-        {
-            println!("Could not send Close due to {e:?}, probably it is ok?");
-        };
 
         loop {
             tokio::select! {
