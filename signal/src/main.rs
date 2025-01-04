@@ -194,11 +194,11 @@ impl ResponseHandler {
                             println!("{:?}", value);
 
                             let raw = SessionDescriptionMessage{
-                                target_id: "".into(),
+                                target_id: value.target_id,
                                 sdp: value.sdp,
                             };
 
-                            let response =signal::Message{
+                            let response = signal::Message{
                                 request_type: RequestType::SessionDescription,
                                 raw: serde_json::to_string(&raw).unwrap(),
                             };
@@ -211,11 +211,11 @@ impl ResponseHandler {
                             println!("{:?}", value);
 
                             let raw = CandidateMessage{
-                                target_id: "".into(),
+                                target_id: value.target_id,
                                 candidate: value.candidate,
                             };
 
-                            let response =signal::Message{
+                            let response = signal::Message{
                                 request_type: RequestType::SessionDescription,
                                 raw: serde_json::to_string(&raw).unwrap(),
                             };

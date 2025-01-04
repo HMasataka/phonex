@@ -54,10 +54,12 @@ pub enum MatchResponse {
 
 #[derive(Debug)]
 pub struct MatchSessionDescriptionResponse {
+    pub target_id: String,
     pub sdp: RTCSessionDescription,
 }
 
 #[derive(Debug)]
 pub struct MatchCandidateResponse {
+    pub target_id: String,
     pub candidate: String,
 }
