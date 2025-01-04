@@ -19,7 +19,7 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
-const TARGET: &str = "1";
+const ID: &str = "1";
 const SERVER: &str = "ws://127.0.0.1:3000/ws";
 
 #[tokio::main]
@@ -69,7 +69,7 @@ async fn spawn_websocket(tx: Sender<HandshakeRequest>, mut rx: Receiver<Handshak
         .expect("Can not send!");
 
     let mut send_task = tokio::spawn(async move {
-        let m = register_message(TARGET.into()).unwrap();
+        let m = register_message(ID.into()).unwrap();
 
         if sender.send(Message::Text(m.into())).await.is_err() {
             return;
