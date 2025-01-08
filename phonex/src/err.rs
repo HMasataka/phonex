@@ -1,7 +1,10 @@
 use std::string::FromUtf8Error;
 
 use thiserror::Error;
+use tokio::sync::mpsc::error::SendError;
 use tracing_subscriber::util::TryInitError;
+
+use crate::message::HandshakeResponse;
 
 #[derive(Error, Debug)]
 pub enum PhonexError {
@@ -31,4 +34,10 @@ pub enum PhonexError {
     AddIceCandidate(webrtc::Error),
     #[error("failed to convert json: {0}")]
     ConvertToJson(webrtc::Error),
+    #[error("deserialize to string error: {0}")]
+    FromJSONError(serde_json::Error),
+    #[error("serialize to json error: {0}")]
+    ToJSONError(serde_json::Error),
+    #[error("failed to send candidate response: {0}")]
+    SendHandshakeResponse(SendError<HandshakeResponse>),
 }

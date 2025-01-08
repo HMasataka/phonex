@@ -147,48 +147,49 @@ async fn spawn_websocket(tx: Sender<HandshakeRequest>, mut rx: Receiver<Handshak
 }
 
 #[instrument(skip_all, name = "register_message", level = "trace")]
-fn register_message(id: String) -> Result<String, serde_json::Error> {
+fn register_message(id: String) -> Result<String, PhonexError> {
     let register_message = signal::RegisterMessage { id };
-    let r = serde_json::to_string(&register_message)?;
+    let r = serde_json::to_string(&register_message).map_err(PhonexError::FromJSONError)?;
 
     let message = signal::Message {
         request_type: signal::RequestType::Register,
         raw: r,
     };
 
-    return serde_json::to_string(&message);
+    return serde_json::to_string(&message).map_err(PhonexError::FromJSONError);
 }
 
 #[instrument(skip_all, name = "session_description_message", level = "trace")]
 fn session_description_message(
     target_id: String,
     sdp: RTCSessionDescription,
-) -> Result<String, serde_json::Error> {
+) -> Result<String, PhonexError> {
     let session_description_message = signal::SessionDescriptionMessage { target_id, sdp };
-    let r = serde_json::to_string(&session_description_message)?;
+    let r =
+        serde_json::to_string(&session_description_message).map_err(PhonexError::FromJSONError)?;
 
     let message = signal::Message {
         request_type: signal::RequestType::SessionDescription,
         raw: r,
     };
 
-    return serde_json::to_string(&message);
+    return serde_json::to_string(&message).map_err(PhonexError::FromJSONError);
 }
 
 #[instrument(skip_all, name = "candidate_message", level = "trace")]
-fn candidate_message(target_id: String, candidate: String) -> Result<String, serde_json::Error> {
+fn candidate_message(target_id: String, candidate: String) -> Result<String, PhonexError> {
     let candidate_message = signal::CandidateMessage {
         target_id,
         candidate,
     };
-    let r = serde_json::to_string(&candidate_message)?;
+    let r = serde_json::to_string(&candidate_message).map_err(PhonexError::FromJSONError)?;
 
     let message = signal::Message {
         request_type: signal::RequestType::Candidate,
         raw: r,
     };
 
-    return serde_json::to_string(&message);
+    return serde_json::to_string(&message).map_err(PhonexError::FromJSONError);
 }
 
 #[instrument(skip_all, name = "process_message", level = "trace")]
@@ -261,5 +262,6 @@ async fn process_message(tx: Sender<HandshakeRequest>, msg: Message) -> ControlF
             unreachable!("This is never supposed to happen")
         }
     }
+
     ControlFlow::Continue(())
 }

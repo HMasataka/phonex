@@ -23,7 +23,7 @@ use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::{math_rand_alpha, RTCPeerConnection};
 
-const TARGET: &str = "1";
+const TARGET: &str = "2";
 
 pub struct WebRTC {
     rx: Cell<Receiver<HandshakeRequest>>,
@@ -84,13 +84,17 @@ fn on_ice_candidate(
                     let mut cs = pending_candidates.lock().await;
                     cs.push(candidate);
                 } else {
-                    let req = candidate.to_json().unwrap();
+                    let req = candidate
+                        .to_json()
+                        .map_err(PhonexError::ConvertToJson)
+                        .unwrap();
 
                     tx.send(HandshakeResponse::CandidateResponse(CandidateResponse {
                         target_id: candidate.stats_id, // FIXME
                         candidate: req.candidate,
                     }))
                     .await
+                    .map_err(PhonexError::SendHandshakeResponse)
                     .unwrap();
                 }
             }
@@ -206,7 +210,7 @@ impl WebRTC {
                 },
             ))
             .await
-            .unwrap();
+            .map_err(PhonexError::SendHandshakeResponse)?;
 
         Ok(())
     }
@@ -232,17 +236,22 @@ impl WebRTC {
                             },
                         ))
                         .await
+                        .map_err(PhonexError::SendHandshakeResponse)
                         .unwrap();
 
                     self.peer_connection
                         .set_local_description(answer)
                         .await
+                        .map_err(PhonexError::SetLocalDescription)
                         .unwrap();
                 }
 
                 let pending_candidates = self.pending_candidates.lock().await;
                 for candidate in &*pending_candidates {
-                    let req = candidate.to_json().unwrap();
+                    let req = candidate
+                        .to_json()
+                        .map_err(PhonexError::ConvertToJson)
+                        .unwrap();
 
                     self.tx
                         .send(HandshakeResponse::CandidateResponse(CandidateResponse {
@@ -250,6 +259,7 @@ impl WebRTC {
                             candidate: req.candidate,
                         }))
                         .await
+                        .map_err(PhonexError::SendHandshakeResponse)
                         .unwrap();
                 }
             }
@@ -260,6 +270,7 @@ impl WebRTC {
                         ..Default::default()
                     })
                     .await
+                    .map_err(PhonexError::AddIceCandidate)
                     .unwrap();
             }
         }
