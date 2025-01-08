@@ -12,9 +12,9 @@ dotenvy = "0.15.7"
 serde = "1.0.215"
 serde_json = "1.0.133"
 thiserror = "1.0.65"
-tracing = "0.1.40"
-tracing-error = "0.2.0"
-tracing-subscriber = "0.3.18"
+tracing = { workspace = true }
+tracing-error = { workspace = true }
+tracing-subscriber = { workspace = true }
 tracing_spanned = { git = "https://github.com/comnipl/tracing_spanned", rev = "6fed6097d13d117e4d35120f56450b156c33b77e" }
 axum = { version = "0.7.9", features = ["ws"] }
 futures = "0.3.31"

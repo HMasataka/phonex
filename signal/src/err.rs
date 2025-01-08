@@ -4,9 +4,12 @@ use axum::{
 };
 
 use thiserror::Error;
+use tracing_subscriber::util::TryInitError;
 
 #[derive(Error, Debug)]
 pub enum PhonexError {
+    #[error("initialize tracing subscriber error. {0}")]
+    InitializeTracingSubscriber(TryInitError),
     #[error("failed to create new tcp listener: {0}")]
     BuildTcpListener(std::io::Error),
     #[error("failed to serve http: {0}")]

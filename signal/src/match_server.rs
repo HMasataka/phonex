@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
+use tracing::instrument;
 
 use crate::r#match::{
     MatchCandidateResponse, MatchRequest, MatchResponse, MatchSessionDescriptionResponse,
@@ -14,6 +15,7 @@ pub struct Server {
 }
 
 impl Server {
+    #[instrument(skip_all, name = "match_server_new", level = "trace")]
     pub fn new(rx: Cell<Receiver<MatchRequest>>) -> Self {
         Self {
             register_receiver: rx,
@@ -21,6 +23,7 @@ impl Server {
         }
     }
 
+    #[instrument(skip_all, name = "match_server_serve", level = "trace")]
     pub async fn serve(&mut self) {
         loop {
             tokio::select! {
@@ -32,6 +35,7 @@ impl Server {
         }
     }
 
+    #[instrument(skip_all, name = "match_server_handle_request", level = "trace")]
     pub async fn handle_request(&mut self, request: MatchRequest) {
         match request {
             MatchRequest::Register(value) => {

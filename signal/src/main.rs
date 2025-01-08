@@ -11,6 +11,9 @@ use std::sync::Arc;
 use std::{cell::Cell, net::SocketAddr};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{mpsc, Mutex};
+use tracing::instrument;
+use tracing_error::ErrorLayer;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 use axum::{
     extract::{
@@ -33,8 +36,26 @@ lazy_static! {
         Arc::new(Mutex::new(vec![]));
 }
 
+#[instrument(skip_all, name = "initialize_tracing_subscriber", level = "trace")]
+fn initialize_tracing_subscriber() -> Result<(), SpanErr<PhonexError>> {
+    tracing_subscriber::Registry::default()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .with_filter(tracing_subscriber::filter::LevelFilter::INFO),
+        )
+        .with(ErrorLayer::default())
+        .try_init()
+        .map_err(PhonexError::InitializeTracingSubscriber)?;
+
+    Ok(())
+}
+
 #[tokio::main]
+#[instrument(skip_all, name = "main", level = "trace")]
 async fn main() -> Result<(), SpanErr<PhonexError>> {
+    initialize_tracing_subscriber()?;
+
     let (tx, rx) = mpsc::channel::<MatchRequest>(100);
 
     let mut match_server = Server::new(Cell::new(rx));
@@ -62,10 +83,12 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
     Ok(())
 }
 
+#[instrument(skip_all, name = "hello_world", level = "trace")]
 async fn hello_world() -> Html<&'static str> {
     Html("<h1>Hello, World!</h1>")
 }
 
+#[instrument(skip_all, name = "upgrade_to_websocket", level = "trace")]
 async fn upgrade_to_websocket(
     State(channel): State<Sender<MatchRequest>>,
     ws: WebSocketUpgrade,
@@ -75,6 +98,7 @@ async fn upgrade_to_websocket(
     ws.on_upgrade(move |socket| handle_socket(socket, channel))
 }
 
+#[instrument(skip_all, name = "handle_socket", level = "trace")]
 async fn handle_socket(ws: WebSocket, match_sender: Sender<MatchRequest>) {
     let (sender, mut receiver) = ws.split();
     let (tx, rx) = mpsc::channel::<MatchResponse>(100);
@@ -107,6 +131,7 @@ pub struct RequestHandler {
 }
 
 impl RequestHandler {
+    #[instrument(skip_all, name = "request_handler_new", level = "trace")]
     fn new(req: Sender<MatchRequest>, res: Sender<MatchResponse>) -> Self {
         Self {
             request_sender: req,
@@ -114,6 +139,7 @@ impl RequestHandler {
         }
     }
 
+    #[instrument(skip_all, name = "request_handler_string", level = "trace")]
     async fn string(self, message: String) {
         let deserialized: signal::Message = serde_json::from_str(&message).unwrap();
 
@@ -161,6 +187,7 @@ impl RequestHandler {
         println!("{:?}", deserialized);
     }
 
+    #[instrument(skip_all, name = "request_handler_binary", level = "trace")]
     async fn binary(self, message: Vec<u8>) {
         let converted: String = String::from_utf8(message.to_vec()).unwrap();
         self.string(converted).await;
@@ -173,6 +200,7 @@ pub struct ResponseHandler {
 }
 
 impl ResponseHandler {
+    #[instrument(skip_all, name = "response_handler_new", level = "trace")]
     fn new(
         ws: SplitSink<WebSocket, Message>,
         response_receiver: Cell<Receiver<MatchResponse>>,
@@ -183,6 +211,7 @@ impl ResponseHandler {
         }
     }
 
+    #[instrument(skip_all, name = "response_handler_serve", level = "trace")]
     async fn serve(&mut self) {
         loop {
             tokio::select! {
