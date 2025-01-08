@@ -9,6 +9,7 @@ use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
+use tracing::instrument;
 use tracing_spanned::SpanErr;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
@@ -31,6 +32,7 @@ pub struct WebRTC {
     pending_candidates: Arc<Mutex<Vec<RTCIceCandidate>>>,
 }
 
+#[instrument(skip_all, name = "initialize_peer_connection", level = "trace")]
 async fn initialize_peer_connection() -> Result<Arc<RTCPeerConnection>, SpanErr<PhonexError>> {
     let config = RTCConfiguration {
         ice_servers: vec![RTCIceServer {
@@ -62,6 +64,7 @@ async fn initialize_peer_connection() -> Result<Arc<RTCPeerConnection>, SpanErr<
     Ok(peer_connection)
 }
 
+#[instrument(skip_all, name = "on_ice_candidate", level = "trace")]
 fn on_ice_candidate(
     tx: Sender<HandshakeResponse>,
     peer_connection: Arc<RTCPeerConnection>,
@@ -95,6 +98,7 @@ fn on_ice_candidate(
     }))
 }
 
+#[instrument(skip_all, name = "on_open", level = "trace")]
 fn on_open(data_channel: Arc<RTCDataChannel>) -> Result<OnOpenHdlrFn, SpanErr<PhonexError>> {
     Ok(Box::new(move || {
         println!("Data channel '{}'-'{}' open. Random messages will now be sent to any connected DataChannels every 5 seconds", data_channel.label(), data_channel.id());
@@ -119,6 +123,7 @@ fn on_open(data_channel: Arc<RTCDataChannel>) -> Result<OnOpenHdlrFn, SpanErr<Ph
     }))
 }
 
+#[instrument(skip_all, name = "on_message", level = "trace")]
 fn on_message(data_channel_label: String) -> Result<OnMessageHdlrFn, SpanErr<PhonexError>> {
     Ok(Box::new(move |msg: DataChannelMessage| {
         let msg_str = String::from_utf8(msg.data.to_vec())
@@ -130,6 +135,7 @@ fn on_message(data_channel_label: String) -> Result<OnMessageHdlrFn, SpanErr<Pho
 }
 
 impl WebRTC {
+    #[instrument(skip_all, name = "webrtc_new", level = "trace")]
     pub async fn new(
         rx: Cell<Receiver<HandshakeRequest>>,
         tx: Sender<HandshakeResponse>,
@@ -145,6 +151,7 @@ impl WebRTC {
         })
     }
 
+    #[instrument(skip_all, name = "webrtc_handshake", level = "trace")]
     pub async fn handshake(&mut self) -> Result<(), SpanErr<PhonexError>> {
         let pc = Arc::clone(&self.peer_connection);
         let tx1 = self.tx.clone();
@@ -178,6 +185,7 @@ impl WebRTC {
         Ok(())
     }
 
+    #[instrument(skip_all, name = "webrtc_offer", level = "trace")]
     async fn offer(&mut self) -> Result<(), SpanErr<PhonexError>> {
         let offer = self
             .peer_connection
@@ -203,6 +211,7 @@ impl WebRTC {
         Ok(())
     }
 
+    #[instrument(skip_all, name = "webrtc_handle_handshake", level = "trace")]
     async fn handle_handshake(&mut self, msg: HandshakeRequest) -> ControlFlow<(), ()> {
         match msg {
             HandshakeRequest::SessionDescriptionRequest(v) => {
@@ -258,6 +267,7 @@ impl WebRTC {
         ControlFlow::Continue(())
     }
 
+    #[instrument(skip_all, name = "webrtc_close_connection", level = "trace")]
     pub async fn close_connection(self) {
         self.peer_connection.close().await.unwrap();
     }

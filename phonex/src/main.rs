@@ -14,7 +14,10 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
+use tracing::instrument;
+use tracing_error::ErrorLayer;
 use tracing_spanned::SpanErr;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
@@ -22,8 +25,26 @@ use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 const ID: &str = "1";
 const SERVER: &str = "ws://127.0.0.1:3000/ws";
 
+#[instrument(skip_all, name = "initialize_tracing_subscriber", level = "trace")]
+fn initialize_tracing_subscriber() -> Result<(), SpanErr<PhonexError>> {
+    tracing_subscriber::Registry::default()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .with_filter(tracing_subscriber::filter::LevelFilter::INFO),
+        )
+        .with(ErrorLayer::default())
+        .try_init()
+        .map_err(PhonexError::InitializeTracingSubscriber)?;
+
+    Ok(())
+}
+
 #[tokio::main]
+#[instrument(skip_all, name = "main", level = "trace")]
 async fn main() -> Result<(), SpanErr<PhonexError>> {
+    initialize_tracing_subscriber()?;
+
     let start_time = Instant::now();
     let (req_tx, req_rx) = mpsc::channel::<HandshakeRequest>(100);
     let (res_tx, res_rx) = mpsc::channel::<HandshakeResponse>(100);
@@ -45,6 +66,7 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
     Ok(())
 }
 
+#[instrument(skip_all, name = "spawn_websocket", level = "trace")]
 async fn spawn_websocket(tx: Sender<HandshakeRequest>, mut rx: Receiver<HandshakeResponse>) {
     let ws_stream = match connect_async(SERVER).await {
         Ok((stream, response)) => {
@@ -124,6 +146,7 @@ async fn spawn_websocket(tx: Sender<HandshakeRequest>, mut rx: Receiver<Handshak
     }
 }
 
+#[instrument(skip_all, name = "register_message", level = "trace")]
 fn register_message(id: String) -> Result<String, serde_json::Error> {
     let register_message = signal::RegisterMessage { id };
     let r = serde_json::to_string(&register_message)?;
@@ -136,6 +159,7 @@ fn register_message(id: String) -> Result<String, serde_json::Error> {
     return serde_json::to_string(&message);
 }
 
+#[instrument(skip_all, name = "session_description_message", level = "trace")]
 fn session_description_message(
     target_id: String,
     sdp: RTCSessionDescription,
@@ -151,6 +175,7 @@ fn session_description_message(
     return serde_json::to_string(&message);
 }
 
+#[instrument(skip_all, name = "candidate_message", level = "trace")]
 fn candidate_message(target_id: String, candidate: String) -> Result<String, serde_json::Error> {
     let candidate_message = signal::CandidateMessage {
         target_id,
@@ -166,6 +191,7 @@ fn candidate_message(target_id: String, candidate: String) -> Result<String, ser
     return serde_json::to_string(&message);
 }
 
+#[instrument(skip_all, name = "process_message", level = "trace")]
 async fn process_message(tx: Sender<HandshakeRequest>, msg: Message) -> ControlFlow<(), ()> {
     match msg {
         Message::Text(message) => {
