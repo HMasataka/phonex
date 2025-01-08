@@ -5,6 +5,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
 use tracing::instrument;
 
+use crate::err::PhonexError;
 use crate::r#match::{
     MatchCandidateResponse, MatchRequest, MatchResponse, MatchSessionDescriptionResponse,
 };
@@ -29,21 +30,21 @@ impl Server {
             tokio::select! {
                 val = self.register_receiver.get_mut().recv() => {
                     let request = val.unwrap();
-                    self.handle_request(request).await;
+                    let _ = self.handle_request(request).await;
                 }
             };
         }
     }
 
     #[instrument(skip_all, name = "match_server_handle_request", level = "trace")]
-    pub async fn handle_request(&mut self, request: MatchRequest) {
+    pub async fn handle_request(&mut self, request: MatchRequest) -> Result<(), PhonexError> {
         match request {
             MatchRequest::Register(value) => {
                 println!("{:?}", value);
 
                 let mut m = self.response_channels.lock().await;
                 if m.contains_key(&value.id) {
-                    return;
+                    return Err(PhonexError::RegisterNotFound());
                 }
 
                 m.insert(value.id, value.chan);
@@ -53,7 +54,7 @@ impl Server {
 
                 let m = self.response_channels.lock().await;
                 if !m.contains_key(&value.target_id) {
-                    return;
+                    return Err(PhonexError::RegisterNotFound());
                 }
 
                 let chan = m.get(&value.target_id).unwrap();
@@ -64,14 +65,14 @@ impl Server {
                     },
                 ))
                 .await
-                .unwrap();
+                .map_err(PhonexError::SendMatchResponse)?;
             }
             MatchRequest::Candidate(value) => {
                 println!("{:?}", value);
 
                 let m = self.response_channels.lock().await;
                 if !m.contains_key(&value.target_id) {
-                    return;
+                    return Err(PhonexError::RegisterNotFound());
                 }
 
                 let chan = m.get(&value.target_id).unwrap();
@@ -80,8 +81,10 @@ impl Server {
                     candidate: value.candidate,
                 }))
                 .await
-                .unwrap();
+                .map_err(PhonexError::SendMatchResponse)?;
             }
         }
+
+        Ok(())
     }
 }

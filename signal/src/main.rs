@@ -106,14 +106,29 @@ async fn handle_socket(ws: WebSocket, match_sender: Sender<MatchRequest>) {
     let mut response_handler = ResponseHandler::new(sender, Cell::new(rx));
 
     tokio::spawn(async move {
-        response_handler.serve().await;
+        let result = response_handler.serve().await;
+        if result.is_err() {
+            //TODO error handling
+        }
     });
 
     while let Some(message) = receiver.next().await {
         if let Ok(msg) = message {
             match msg {
-                Message::Text(text) => request_handler.clone().string(text).await,
-                Message::Binary(binary) => request_handler.clone().binary(binary).await,
+                Message::Text(text) => {
+                    let result = request_handler.clone().string(text).await;
+                    if result.is_err() {
+                        // TODO error handling
+                        break;
+                    }
+                }
+                Message::Binary(binary) => {
+                    let result = request_handler.clone().binary(binary).await;
+                    if result.is_err() {
+                        // TODO error handling
+                        break;
+                    }
+                }
                 Message::Pong(v) => println!(">>> sent pong with {v:?}"),
                 Message::Ping(v) => println!(">>> receive ping with {v:?}"),
                 Message::Close(_) => break,
@@ -140,13 +155,15 @@ impl RequestHandler {
     }
 
     #[instrument(skip_all, name = "request_handler_string", level = "trace")]
-    async fn string(self, message: String) {
-        let deserialized: signal::Message = serde_json::from_str(&message).unwrap();
+    async fn string(self, message: String) -> Result<(), PhonexError> {
+        let deserialized: signal::Message =
+            serde_json::from_str(&message).map_err(PhonexError::SerializeToJSONError)?;
 
         match deserialized.request_type {
             RequestType::Register => {
                 let register_message: signal::RegisterMessage =
-                    serde_json::from_str(&deserialized.raw).unwrap();
+                    serde_json::from_str(&deserialized.raw)
+                        .map_err(PhonexError::DeserializeJSONError)?;
 
                 self.request_sender
                     .send(MatchRequest::Register(MatchRegisterRequest {
@@ -154,27 +171,29 @@ impl RequestHandler {
                         chan: self.response_sender,
                     }))
                     .await
-                    .unwrap();
+                    .map_err(PhonexError::SendMatchRequest)?;
             }
             RequestType::SessionDescription => {
                 let session_description_message: signal::SessionDescriptionMessage =
-                    serde_json::from_str(&deserialized.raw).unwrap();
+                    serde_json::from_str(&deserialized.raw)
+                        .map_err(PhonexError::DeserializeJSONError)?;
 
                 self.request_sender
                     .send(MatchRequest::SessionDescription(
                         session_description_message.into(),
                     ))
                     .await
-                    .unwrap();
+                    .map_err(PhonexError::SendMatchRequest)?;
             }
             RequestType::Candidate => {
                 let candidate_message: signal::CandidateMessage =
-                    serde_json::from_str(&deserialized.raw).unwrap();
+                    serde_json::from_str(&deserialized.raw)
+                        .map_err(PhonexError::DeserializeJSONError)?;
 
                 self.request_sender
                     .send(MatchRequest::Candidate(candidate_message.into()))
                     .await
-                    .unwrap();
+                    .map_err(PhonexError::SendMatchRequest)?;
             }
             RequestType::Ping => {
                 println!(">>> receive ping");
@@ -185,12 +204,15 @@ impl RequestHandler {
         }
 
         println!("{:?}", deserialized);
+
+        Ok(())
     }
 
     #[instrument(skip_all, name = "request_handler_binary", level = "trace")]
-    async fn binary(self, message: Vec<u8>) {
-        let converted: String = String::from_utf8(message.to_vec()).unwrap();
-        self.string(converted).await;
+    async fn binary(self, message: Vec<u8>) -> Result<(), PhonexError> {
+        let converted: String =
+            String::from_utf8(message.to_vec()).map_err(PhonexError::ConvertToStringError)?;
+        return self.string(converted).await;
     }
 }
 
@@ -212,7 +234,7 @@ impl ResponseHandler {
     }
 
     #[instrument(skip_all, name = "response_handler_serve", level = "trace")]
-    async fn serve(&mut self) {
+    async fn serve(&mut self) -> Result<(), PhonexError> {
         loop {
             tokio::select! {
                 val = self.response_receiver.get_mut().recv() => {
@@ -229,12 +251,12 @@ impl ResponseHandler {
 
                             let response = signal::Message{
                                 request_type: RequestType::SessionDescription,
-                                raw: serde_json::to_string(&raw).unwrap(),
+                                raw: serde_json::to_string(&raw).map_err(PhonexError::SerializeToJSONError)?,
                             };
 
-                            let text = serde_json::to_string(&response).unwrap();
+                            let text = serde_json::to_string(&response).map_err(PhonexError::SerializeToJSONError)?;
 
-                            self.ws.send(Message::Text(text.into())).await.unwrap();
+                            self.ws.send(Message::Text(text.into())).await.map_err(PhonexError::WriteWebsocket)?;
                         }
                         MatchResponse::Candidate(value) => {
                             println!("{:?}", value);
@@ -246,12 +268,12 @@ impl ResponseHandler {
 
                             let response = signal::Message{
                                 request_type: RequestType::Candidate,
-                                raw: serde_json::to_string(&raw).unwrap(),
+                                raw: serde_json::to_string(&raw).map_err(PhonexError::SerializeToJSONError)?,
                             };
 
-                            let text = serde_json::to_string(&response).unwrap();
+                            let text = serde_json::to_string(&response).map_err(PhonexError::SerializeToJSONError)?;
 
-                            self.ws.send(Message::Text(text.into())).await.unwrap();
+                            self.ws.send(Message::Text(text.into())).await.map_err(PhonexError::WriteWebsocket)?;
                         }
                     }
                 }
