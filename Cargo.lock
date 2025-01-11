@@ -793,6 +793,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "errors"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tracing",
+ "tracing-error",
+ "tracing-subscriber",
+ "tracing_spanned",
+ "webrtc 0.12.0",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2333,6 +2347,7 @@ dependencies = [
  "axum 0.7.9",
  "clap",
  "dotenvy",
+ "errors",
  "futures",
  "futures-util",
  "lazy_static",

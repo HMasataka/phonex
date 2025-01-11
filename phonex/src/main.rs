@@ -18,7 +18,6 @@ use tracing::instrument;
 use tracing_error::ErrorLayer;
 use tracing_spanned::SpanErr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
-use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
@@ -91,9 +90,12 @@ async fn spawn_websocket(tx: Sender<HandshakeRequest>, mut rx: Receiver<Handshak
         .expect("Can not send!");
 
     let mut send_task = tokio::spawn(async move {
-        let m = register_message(ID.into()).unwrap();
+        let register = signal::Message::new_register_message(ID.into())
+            .unwrap()
+            .try_to_string()
+            .unwrap();
 
-        if sender.send(Message::Text(m.into())).await.is_err() {
+        if sender.send(Message::Text(register.into())).await.is_err() {
             return;
         }
 
@@ -103,7 +105,7 @@ async fn spawn_websocket(tx: Sender<HandshakeRequest>, mut rx: Receiver<Handshak
                     let response = val.unwrap();
                     match response {
                         HandshakeResponse::SessionDescriptionResponse(v) => {
-                            let m = session_description_message(v.target_id, v.sdp).unwrap();
+                            let m = signal::Message::new_session_description_message(v.target_id, v.sdp).unwrap().try_to_string().unwrap();
 
                             if let Err(e) = sender
                                 .send(Message::Text(m.into()))
@@ -113,7 +115,7 @@ async fn spawn_websocket(tx: Sender<HandshakeRequest>, mut rx: Receiver<Handshak
                             };
                         }
                         HandshakeResponse::CandidateResponse(v) => {
-                            let m = candidate_message(v.target_id, v.candidate).unwrap();
+                            let m = signal::Message::new_candidate_message(v.target_id, v.candidate).unwrap().try_to_string().unwrap();
 
                             if let Err(e) = sender
                                 .send(Message::Text(m.into()))
@@ -144,52 +146,6 @@ async fn spawn_websocket(tx: Sender<HandshakeRequest>, mut rx: Receiver<Handshak
             send_task.abort();
         }
     }
-}
-
-#[instrument(skip_all, name = "register_message", level = "trace")]
-fn register_message(id: String) -> Result<String, PhonexError> {
-    let register_message = signal::RegisterMessage { id };
-    let r = serde_json::to_string(&register_message).map_err(PhonexError::FromJSONError)?;
-
-    let message = signal::Message {
-        request_type: signal::RequestType::Register,
-        raw: r,
-    };
-
-    return serde_json::to_string(&message).map_err(PhonexError::FromJSONError);
-}
-
-#[instrument(skip_all, name = "session_description_message", level = "trace")]
-fn session_description_message(
-    target_id: String,
-    sdp: RTCSessionDescription,
-) -> Result<String, PhonexError> {
-    let session_description_message = signal::SessionDescriptionMessage { target_id, sdp };
-    let r =
-        serde_json::to_string(&session_description_message).map_err(PhonexError::FromJSONError)?;
-
-    let message = signal::Message {
-        request_type: signal::RequestType::SessionDescription,
-        raw: r,
-    };
-
-    return serde_json::to_string(&message).map_err(PhonexError::FromJSONError);
-}
-
-#[instrument(skip_all, name = "candidate_message", level = "trace")]
-fn candidate_message(target_id: String, candidate: String) -> Result<String, PhonexError> {
-    let candidate_message = signal::CandidateMessage {
-        target_id,
-        candidate,
-    };
-    let r = serde_json::to_string(&candidate_message).map_err(PhonexError::FromJSONError)?;
-
-    let message = signal::Message {
-        request_type: signal::RequestType::Candidate,
-        raw: r,
-    };
-
-    return serde_json::to_string(&message).map_err(PhonexError::FromJSONError);
 }
 
 #[instrument(skip_all, name = "process_message", level = "trace")]
