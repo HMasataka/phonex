@@ -22,14 +22,16 @@ pub async fn initialize_data_channel(
         .await
         .map_err(PhonexError::CreateNewDataChannel)?;
 
-    data_channel.on_open(on_open(Arc::clone(&data_channel))?);
-    data_channel.on_message(on_message(label.to_string())?);
+    data_channel.on_open(data_channel_on_open(Arc::clone(&data_channel))?);
+    data_channel.on_message(data_channel_on_message(label.to_string())?);
 
     Ok(())
 }
 
 #[instrument(skip_all, name = "data_channel_on_open", level = "trace")]
-fn on_open(data_channel: Arc<RTCDataChannel>) -> Result<OnOpenHdlrFn, SpanErr<PhonexError>> {
+fn data_channel_on_open(
+    data_channel: Arc<RTCDataChannel>,
+) -> Result<OnOpenHdlrFn, SpanErr<PhonexError>> {
     Ok(Box::new(move || {
         println!("Data channel '{}'-'{}' open. Random messages will now be sent to any connected DataChannels every 5 seconds", data_channel.label(), data_channel.id());
 
@@ -54,7 +56,9 @@ fn on_open(data_channel: Arc<RTCDataChannel>) -> Result<OnOpenHdlrFn, SpanErr<Ph
 }
 
 #[instrument(skip_all, name = "data_channel_on_message", level = "trace")]
-fn on_message(data_channel_label: String) -> Result<OnMessageHdlrFn, SpanErr<PhonexError>> {
+fn data_channel_on_message(
+    data_channel_label: String,
+) -> Result<OnMessageHdlrFn, SpanErr<PhonexError>> {
     Ok(Box::new(move |msg: DataChannelMessage| {
         let msg_str = String::from_utf8(msg.data.to_vec())
             .map_err(PhonexError::ConvertByteToString)
