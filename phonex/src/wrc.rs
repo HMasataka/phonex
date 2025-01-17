@@ -153,20 +153,46 @@ impl WebRTC {
             .await
             .map_err(PhonexError::CreateNewOffer)?;
 
+        self.tx
+            .send(HandshakeResponse::SessionDescriptionResponse(
+                SessionDescriptionResponse {
+                    target_id: TARGET.into(),
+                    sdp: offer.clone(),
+                },
+            ))
+            .await
+            .map_err(PhonexError::SendHandshakeResponse)?;
+
         self.peer_connection
-            .set_local_description(offer.clone())
+            .set_local_description(offer)
             .await
             .map_err(PhonexError::SetLocalDescription)?;
+
+        Ok(())
+    }
+
+    #[instrument(skip_all, name = "webrtc_answer", level = "trace")]
+    async fn answer(&mut self) -> Result<(), SpanErr<PhonexError>> {
+        let answer = self
+            .peer_connection
+            .create_answer(None)
+            .await
+            .map_err(PhonexError::CreateNewAnswer)?;
 
         self.tx
             .send(HandshakeResponse::SessionDescriptionResponse(
                 SessionDescriptionResponse {
                     target_id: TARGET.into(),
-                    sdp: offer,
+                    sdp: answer.clone(),
                 },
             ))
             .await
             .map_err(PhonexError::SendHandshakeResponse)?;
+
+        self.peer_connection
+            .set_local_description(answer)
+            .await
+            .map_err(PhonexError::SetLocalDescription)?;
 
         Ok(())
     }
@@ -182,24 +208,7 @@ impl WebRTC {
                 }
 
                 if self.peer_connection.local_description().await.is_none() {
-                    let answer = self.peer_connection.create_answer(None).await.unwrap();
-
-                    self.tx
-                        .send(HandshakeResponse::SessionDescriptionResponse(
-                            SessionDescriptionResponse {
-                                target_id: TARGET.into(),
-                                sdp: answer.clone(),
-                            },
-                        ))
-                        .await
-                        .map_err(PhonexError::SendHandshakeResponse)
-                        .unwrap();
-
-                    self.peer_connection
-                        .set_local_description(answer)
-                        .await
-                        .map_err(PhonexError::SetLocalDescription)
-                        .unwrap();
+                    self.answer().await.unwrap();
                 }
 
                 let pending_candidates = self.pending_candidates.lock().await;

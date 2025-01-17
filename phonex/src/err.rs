@@ -20,6 +20,8 @@ pub enum PhonexError {
     CreateNewDataChannel(webrtc::Error),
     #[error("failed to create new offer: {0}")]
     CreateNewOffer(webrtc::Error),
+    #[error("failed to create new answer: {0}")]
+    CreateNewAnswer(webrtc::Error),
     #[error("failed to set local description: {0}")]
     SetLocalDescription(webrtc::Error),
     #[error("failed to convert to string: {0}")]

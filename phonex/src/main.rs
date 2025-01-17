@@ -82,7 +82,6 @@ async fn spawn_websocket(tx: Sender<HandshakeRequest>, mut rx: Receiver<Handshak
 
     let (mut sender, mut receiver) = ws_stream.split();
 
-    //we can ping the server for start
     sender
         .send(Message::Ping(axum::body::Bytes::from_static(
             b"Hello, Server!",
