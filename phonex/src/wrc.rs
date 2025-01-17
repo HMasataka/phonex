@@ -227,20 +227,32 @@ impl WebRTC {
                 }
 
                 if self.peer_connection.local_description().await.is_none() {
-                    self.answer().await.unwrap();
+                    let v = self.answer().await;
+                    if v.is_err() {
+                        println!("send answer err: {:?}", v.err());
+                        return ControlFlow::Break(());
+                    }
                 }
 
-                self.handle_pending_candidate().await.unwrap();
+                let v = self.handle_pending_candidate().await;
+                if v.is_err() {
+                    println!("handle pending candidate err: {:?}", v.err());
+                    return ControlFlow::Break(());
+                }
             }
             HandshakeRequest::CandidateRequest(v) => {
-                self.peer_connection
+                let v = self
+                    .peer_connection
                     .add_ice_candidate(RTCIceCandidateInit {
                         candidate: v.candidate,
                         ..Default::default()
                     })
                     .await
-                    .map_err(PhonexError::AddIceCandidate)
-                    .unwrap();
+                    .map_err(PhonexError::AddIceCandidate);
+                if v.is_err() {
+                    println!("add ice candidate err: {:?}", v.err());
+                    return ControlFlow::Break(());
+                }
             }
         }
 
