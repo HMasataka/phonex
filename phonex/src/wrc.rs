@@ -197,6 +197,25 @@ impl WebRTC {
         Ok(())
     }
 
+    #[instrument(skip_all, name = "handle_pending_candidate", level = "trace")]
+    async fn handle_pending_candidate(&mut self) -> Result<(), SpanErr<PhonexError>> {
+        let pending_candidates = self.pending_candidates.lock().await;
+
+        for candidate in &*pending_candidates {
+            let req = candidate.to_json().map_err(PhonexError::ConvertToJson)?;
+
+            self.tx
+                .send(HandshakeResponse::CandidateResponse(CandidateResponse {
+                    target_id: TARGET.into(),
+                    candidate: req.candidate,
+                }))
+                .await
+                .map_err(PhonexError::SendHandshakeResponse)?;
+        }
+
+        Ok(())
+    }
+
     #[instrument(skip_all, name = "webrtc_handle_handshake", level = "trace")]
     async fn handle_handshake(&mut self, msg: HandshakeRequest) -> ControlFlow<(), ()> {
         match msg {
@@ -211,22 +230,7 @@ impl WebRTC {
                     self.answer().await.unwrap();
                 }
 
-                let pending_candidates = self.pending_candidates.lock().await;
-                for candidate in &*pending_candidates {
-                    let req = candidate
-                        .to_json()
-                        .map_err(PhonexError::ConvertToJson)
-                        .unwrap();
-
-                    self.tx
-                        .send(HandshakeResponse::CandidateResponse(CandidateResponse {
-                            target_id: TARGET.into(),
-                            candidate: req.candidate,
-                        }))
-                        .await
-                        .map_err(PhonexError::SendHandshakeResponse)
-                        .unwrap();
-                }
+                self.handle_pending_candidate().await.unwrap();
             }
             HandshakeRequest::CandidateRequest(v) => {
                 self.peer_connection
