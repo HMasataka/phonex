@@ -4,7 +4,7 @@ use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
 use tracing_subscriber::util::TryInitError;
 
-use crate::message::HandshakeResponse;
+use crate::message::Handshake;
 
 #[derive(Error, Debug)]
 pub enum PhonexError {
@@ -31,5 +31,5 @@ pub enum PhonexError {
     #[error("failed to convert json: {0}")]
     ConvertToJson(webrtc::Error),
     #[error("failed to send candidate response: {0}")]
-    SendHandshakeResponse(SendError<HandshakeResponse>),
+    SendHandshakeResponse(SendError<Handshake>),
 }

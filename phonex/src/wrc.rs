@@ -1,8 +1,8 @@
 use crate::data_channel::initialize_data_channel;
 use crate::err::PhonexError;
-use crate::message::{
-    CandidateResponse, HandshakeRequest, HandshakeResponse, SessionDescriptionResponse,
-};
+use crate::message::Candidate;
+use crate::message::Handshake;
+use crate::message::SessionDescription;
 use std::cell::Cell;
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -24,8 +24,8 @@ use webrtc::peer_connection::RTCPeerConnection;
 const TARGET: &str = "2";
 
 pub struct WebRTC {
-    rx: Cell<Receiver<HandshakeRequest>>,
-    tx: Sender<HandshakeResponse>,
+    rx: Cell<Receiver<Handshake>>,
+    tx: Sender<Handshake>,
     peer_connection: Arc<RTCPeerConnection>,
     pending_candidates: Arc<Mutex<Vec<RTCIceCandidate>>>,
 }
@@ -64,7 +64,7 @@ async fn initialize_peer_connection() -> Result<Arc<RTCPeerConnection>, SpanErr<
 
 #[instrument(skip_all, name = "on_ice_candidate", level = "trace")]
 fn on_ice_candidate(
-    tx: Sender<HandshakeResponse>,
+    tx: Sender<Handshake>,
     peer_connection: Arc<RTCPeerConnection>,
     pending_candidates: Arc<Mutex<Vec<RTCIceCandidate>>>,
 ) -> Result<OnLocalCandidateHdlrFn, SpanErr<PhonexError>> {
@@ -87,7 +87,7 @@ fn on_ice_candidate(
                         .map_err(PhonexError::ConvertToJson)
                         .unwrap();
 
-                    tx.send(HandshakeResponse::CandidateResponse(CandidateResponse {
+                    tx.send(Handshake::Candidate(Candidate {
                         target_id: candidate.stats_id, // FIXME
                         candidate: req.candidate,
                     }))
@@ -103,8 +103,8 @@ fn on_ice_candidate(
 impl WebRTC {
     #[instrument(skip_all, name = "webrtc_new", level = "trace")]
     pub async fn new(
-        rx: Cell<Receiver<HandshakeRequest>>,
-        tx: Sender<HandshakeResponse>,
+        rx: Cell<Receiver<Handshake>>,
+        tx: Sender<Handshake>,
     ) -> Result<Self, SpanErr<PhonexError>> {
         let peer_connection = initialize_peer_connection().await?;
         let pending_candidates: Arc<Mutex<Vec<RTCIceCandidate>>> = Arc::new(Mutex::new(vec![]));
@@ -154,12 +154,10 @@ impl WebRTC {
             .map_err(PhonexError::CreateNewOffer)?;
 
         self.tx
-            .send(HandshakeResponse::SessionDescriptionResponse(
-                SessionDescriptionResponse {
-                    target_id: TARGET.into(),
-                    sdp: offer.clone(),
-                },
-            ))
+            .send(Handshake::SessionDescription(SessionDescription {
+                target_id: TARGET.into(),
+                sdp: offer.clone(),
+            }))
             .await
             .map_err(PhonexError::SendHandshakeResponse)?;
 
@@ -180,12 +178,10 @@ impl WebRTC {
             .map_err(PhonexError::CreateNewAnswer)?;
 
         self.tx
-            .send(HandshakeResponse::SessionDescriptionResponse(
-                SessionDescriptionResponse {
-                    target_id: TARGET.into(),
-                    sdp: answer.clone(),
-                },
-            ))
+            .send(Handshake::SessionDescription(SessionDescription {
+                target_id: TARGET.into(),
+                sdp: answer.clone(),
+            }))
             .await
             .map_err(PhonexError::SendHandshakeResponse)?;
 
@@ -205,7 +201,7 @@ impl WebRTC {
             let req = candidate.to_json().map_err(PhonexError::ConvertToJson)?;
 
             self.tx
-                .send(HandshakeResponse::CandidateResponse(CandidateResponse {
+                .send(Handshake::Candidate(Candidate {
                     target_id: TARGET.into(),
                     candidate: req.candidate,
                 }))
@@ -217,9 +213,9 @@ impl WebRTC {
     }
 
     #[instrument(skip_all, name = "webrtc_handle_handshake", level = "trace")]
-    async fn handle_handshake(&mut self, msg: HandshakeRequest) -> ControlFlow<(), ()> {
+    async fn handle_handshake(&mut self, msg: Handshake) -> ControlFlow<(), ()> {
         match msg {
-            HandshakeRequest::SessionDescriptionRequest(v) => {
+            Handshake::SessionDescription(v) => {
                 let v = self.peer_connection.set_remote_description(v.sdp).await;
                 if v.is_err() {
                     println!("set_remote_description err: {:?}", v.err());
@@ -240,7 +236,7 @@ impl WebRTC {
                     return ControlFlow::Break(());
                 }
             }
-            HandshakeRequest::CandidateRequest(v) => {
+            Handshake::Candidate(v) => {
                 let v = self
                     .peer_connection
                     .add_ice_candidate(RTCIceCandidateInit {

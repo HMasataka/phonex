@@ -5,8 +5,7 @@ mod wrc;
 
 use err::PhonexError;
 use futures_util::{SinkExt, StreamExt};
-use message::{CandidateRequest, SessionDescriptionRequest};
-use message::{HandshakeRequest, HandshakeResponse};
+use message::{Candidate, Handshake, SessionDescription};
 use signal;
 use signal::RequestType;
 use std::cell::Cell;
@@ -46,8 +45,8 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
     initialize_tracing_subscriber()?;
 
     let start_time = Instant::now();
-    let (req_tx, req_rx) = mpsc::channel::<HandshakeRequest>(100);
-    let (res_tx, res_rx) = mpsc::channel::<HandshakeResponse>(100);
+    let (req_tx, req_rx) = mpsc::channel::<Handshake>(100);
+    let (res_tx, res_rx) = mpsc::channel::<Handshake>(100);
 
     let mut wrc = wrc::WebRTC::new(Cell::new(req_rx), res_tx).await?;
 
@@ -67,7 +66,7 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
 }
 
 #[instrument(skip_all, name = "spawn_websocket", level = "trace")]
-async fn spawn_websocket(tx: Sender<HandshakeRequest>, mut rx: Receiver<HandshakeResponse>) {
+async fn spawn_websocket(tx: Sender<Handshake>, mut rx: Receiver<Handshake>) {
     let ws_stream = match connect_async(SERVER).await {
         Ok((stream, response)) => {
             println!("Handshake has been completed");
@@ -104,7 +103,7 @@ async fn spawn_websocket(tx: Sender<HandshakeRequest>, mut rx: Receiver<Handshak
                 val = rx.recv() => {
                     let response = val.unwrap();
                     match response {
-                        HandshakeResponse::SessionDescriptionResponse(v) => {
+                        Handshake::SessionDescription(v) => {
                             let m = signal::Message::new_session_description_message(v.target_id, v.sdp).unwrap().try_to_string().unwrap();
 
                             if let Err(e) = sender
@@ -114,7 +113,7 @@ async fn spawn_websocket(tx: Sender<HandshakeRequest>, mut rx: Receiver<Handshak
                                 println!("Could not send Close due to {e:?}, probably it is ok?");
                             };
                         }
-                        HandshakeResponse::CandidateResponse(v) => {
+                        Handshake::Candidate(v) => {
                             let m = signal::Message::new_candidate_message(v.target_id, v.candidate).unwrap().try_to_string().unwrap();
 
                             if let Err(e) = sender
@@ -149,7 +148,7 @@ async fn spawn_websocket(tx: Sender<HandshakeRequest>, mut rx: Receiver<Handshak
 }
 
 #[instrument(skip_all, name = "process_message", level = "trace")]
-async fn process_message(tx: Sender<HandshakeRequest>, msg: Message) -> ControlFlow<(), ()> {
+async fn process_message(tx: Sender<Handshake>, msg: Message) -> ControlFlow<(), ()> {
     match msg {
         Message::Text(message) => {
             let deserialized: signal::Message = serde_json::from_str(&message).unwrap();
@@ -162,12 +161,10 @@ async fn process_message(tx: Sender<HandshakeRequest>, msg: Message) -> ControlF
 
                     println!("sdp: {:?}", session_description_message.sdp.unmarshal());
 
-                    tx.send(HandshakeRequest::SessionDescriptionRequest(
-                        SessionDescriptionRequest {
-                            target_id: session_description_message.target_id,
-                            sdp: session_description_message.sdp,
-                        },
-                    ))
+                    tx.send(Handshake::SessionDescription(SessionDescription {
+                        target_id: session_description_message.target_id,
+                        sdp: session_description_message.sdp,
+                    }))
                     .await
                     .unwrap();
                 }
@@ -175,7 +172,7 @@ async fn process_message(tx: Sender<HandshakeRequest>, msg: Message) -> ControlF
                     let candidate_message: signal::CandidateMessage =
                         serde_json::from_str(&deserialized.raw).unwrap();
 
-                    tx.send(HandshakeRequest::CandidateRequest(CandidateRequest {
+                    tx.send(Handshake::Candidate(Candidate {
                         target_id: candidate_message.target_id,
                         candidate: candidate_message.candidate,
                     }))
