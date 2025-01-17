@@ -1,27 +1,22 @@
 mod data_channel;
 mod err;
 mod message;
+mod websocket;
 mod wrc;
 
 use err::PhonexError;
-use futures_util::{SinkExt, StreamExt};
-use message::{Candidate, Handshake, SessionDescription};
-use signal;
-use signal::RequestType;
+use futures_util::StreamExt;
+use message::Handshake;
 use std::cell::Cell;
-use std::ops::ControlFlow;
 use std::time::Instant;
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::Receiver;
-use tokio::sync::mpsc::Sender;
 use tracing::instrument;
 use tracing_error::ErrorLayer;
 use tracing_spanned::SpanErr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use tokio_tungstenite::connect_async;
 
-const ID: &str = "1";
 const SERVER: &str = "ws://127.0.0.1:3000/ws";
 
 #[instrument(skip_all, name = "initialize_tracing_subscriber", level = "trace")]
@@ -48,10 +43,17 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
     let (req_tx, req_rx) = mpsc::channel::<Handshake>(100);
     let (res_tx, res_rx) = mpsc::channel::<Handshake>(100);
 
+    let (ws_stream, _) = connect_async(SERVER)
+        .await
+        .map_err(PhonexError::ConnectWebsocket)?;
+
+    let (sender, receiver) = ws_stream.split();
+
+    let mut w = websocket::WebSocket::new(res_rx, req_tx, sender, receiver)?;
     let mut wrc = wrc::WebRTC::new(Cell::new(req_rx), res_tx).await?;
 
     let webrtc_task = tokio::spawn(async move { wrc.handshake().await });
-    let websocket_task = tokio::spawn(spawn_websocket(req_tx, res_rx));
+    let websocket_task = tokio::spawn(async move { w.spawn().await });
 
     let _ = websocket_task.await;
     let _ = webrtc_task.await;
@@ -63,158 +65,4 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
     // wrc.close_connection().await;
 
     Ok(())
-}
-
-#[instrument(skip_all, name = "spawn_websocket", level = "trace")]
-async fn spawn_websocket(tx: Sender<Handshake>, mut rx: Receiver<Handshake>) {
-    let ws_stream = match connect_async(SERVER).await {
-        Ok((stream, response)) => {
-            println!("Handshake has been completed");
-            println!("Server response was {response:?}");
-            stream
-        }
-        Err(e) => {
-            println!("WebSocket handshake failed with {e}!");
-            return;
-        }
-    };
-
-    let (mut sender, mut receiver) = ws_stream.split();
-
-    sender
-        .send(Message::Ping(axum::body::Bytes::from_static(
-            b"Hello, Server!",
-        )))
-        .await
-        .expect("Can not send!");
-
-    let mut send_task = tokio::spawn(async move {
-        let register = signal::Message::new_register_message(ID.into())
-            .unwrap()
-            .try_to_string()
-            .unwrap();
-
-        if sender.send(Message::Text(register.into())).await.is_err() {
-            return;
-        }
-
-        loop {
-            tokio::select! {
-                val = rx.recv() => {
-                    let response = val.unwrap();
-                    match response {
-                        Handshake::SessionDescription(v) => {
-                            let m = signal::Message::new_session_description_message(v.target_id, v.sdp).unwrap().try_to_string().unwrap();
-
-                            if let Err(e) = sender
-                                .send(Message::Text(m.into()))
-                                .await
-                            {
-                                println!("Could not send Close due to {e:?}, probably it is ok?");
-                            };
-                        }
-                        Handshake::Candidate(v) => {
-                            let m = signal::Message::new_candidate_message(v.target_id, v.candidate).unwrap().try_to_string().unwrap();
-
-                            if let Err(e) = sender
-                                .send(Message::Text(m.into()))
-                                .await
-                            {
-                                println!("Could not send Close due to {e:?}, probably it is ok?");
-                            };
-                        }
-                    }
-                }
-            }
-        }
-    });
-
-    let mut recv_task = tokio::spawn(async move {
-        while let Some(Ok(msg)) = receiver.next().await {
-            if process_message(tx.clone(), msg).await.is_break() {
-                break;
-            }
-        }
-    });
-
-    tokio::select! {
-        _ = (&mut send_task) => {
-            recv_task.abort();
-        },
-        _ = (&mut recv_task) => {
-            send_task.abort();
-        }
-    }
-}
-
-#[instrument(skip_all, name = "process_message", level = "trace")]
-async fn process_message(tx: Sender<Handshake>, msg: Message) -> ControlFlow<(), ()> {
-    match msg {
-        Message::Text(message) => {
-            let deserialized: signal::Message = serde_json::from_str(&message).unwrap();
-
-            match deserialized.request_type {
-                RequestType::Register => {}
-                RequestType::SessionDescription => {
-                    let session_description_message: signal::SessionDescriptionMessage =
-                        serde_json::from_str(&deserialized.raw).unwrap();
-
-                    println!("sdp: {:?}", session_description_message.sdp.unmarshal());
-
-                    tx.send(Handshake::SessionDescription(SessionDescription {
-                        target_id: session_description_message.target_id,
-                        sdp: session_description_message.sdp,
-                    }))
-                    .await
-                    .unwrap();
-                }
-                RequestType::Candidate => {
-                    let candidate_message: signal::CandidateMessage =
-                        serde_json::from_str(&deserialized.raw).unwrap();
-
-                    tx.send(Handshake::Candidate(Candidate {
-                        target_id: candidate_message.target_id,
-                        candidate: candidate_message.candidate,
-                    }))
-                    .await
-                    .unwrap();
-                }
-                RequestType::Ping => {
-                    println!(">>> receive ping");
-                }
-                RequestType::Pong => {
-                    println!(">>> sent pong");
-                }
-            }
-
-            println!("{:?}", deserialized);
-        }
-        Message::Binary(d) => {
-            println!(">>> got {} bytes: {:?}", d.len(), d);
-        }
-        Message::Close(c) => {
-            if let Some(cf) = c {
-                println!(
-                    ">>> got close with code {} and reason `{}`",
-                    cf.code, cf.reason
-                );
-            } else {
-                println!(">>> got close message without CloseFrame");
-            }
-            return ControlFlow::Break(());
-        }
-
-        Message::Pong(v) => {
-            println!(">>> got pong with {v:?}");
-        }
-        Message::Ping(v) => {
-            println!(">>> got ping with {v:?}");
-        }
-
-        Message::Frame(_) => {
-            unreachable!("This is never supposed to happen")
-        }
-    }
-
-    ControlFlow::Continue(())
 }

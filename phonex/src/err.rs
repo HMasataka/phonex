@@ -2,6 +2,7 @@ use std::string::FromUtf8Error;
 
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
+use tokio_tungstenite::tungstenite;
 use tracing_subscriber::util::TryInitError;
 
 use crate::message::Handshake;
@@ -10,8 +11,12 @@ use crate::message::Handshake;
 pub enum PhonexError {
     #[error("failed to initialize tracing subscriber. {0}")]
     InitializeTracingSubscriber(TryInitError),
-    #[error("failed to send message: {0}")]
-    SendMessage(webrtc::Error),
+    #[error("failed to initialize websocekt connection. {0}")]
+    ConnectWebsocket(tungstenite::Error),
+    #[error("failed to send websocket message: {0}")]
+    SendWebSocketMessage(tungstenite::Error),
+    #[error("failed to send webrtc message: {0}")]
+    SendWebRTCMessage(webrtc::Error),
     #[error("failed to initialize registry: {0}")]
     InitializeRegistry(webrtc::Error),
     #[error("failed to create new peer connection: {0}")]

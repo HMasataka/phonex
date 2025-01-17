@@ -47,7 +47,7 @@ fn data_channel_on_open(
                     _ = timeout.as_mut() =>{
                         let message = math_rand_alpha(15);
                         println!("Sending '{message}'");
-                        result = dc.send_text(message).await.map_err(PhonexError::SendMessage);
+                        result = dc.send_text(message).await.map_err(PhonexError::SendWebRTCMessage);
                     }
                 };
             }
