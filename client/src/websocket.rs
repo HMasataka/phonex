@@ -22,25 +22,25 @@ use tracing_spanned::SpanErr;
 const ID: &str = "2";
 
 pub struct WebSocket {
-    rx: Arc<Mutex<Receiver<Handshake>>>,
-    tx: Arc<Sender<Handshake>>,
-    sender: Arc<Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>>,
-    receiver: Arc<Mutex<SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>>>,
+    handshake_receiver: Arc<Mutex<Receiver<Handshake>>>,
+    handshake_sender: Arc<Sender<Handshake>>,
+    ws_sender: Arc<Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>>,
+    ws_receiver: Arc<Mutex<SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>>>,
 }
 
 impl WebSocket {
     #[instrument(skip_all, name = "webrtc_new", level = "trace")]
     pub fn new(
-        rx: Receiver<Handshake>,
-        tx: Sender<Handshake>,
-        sender: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
-        receiver: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
+        handshake_receiver: Receiver<Handshake>,
+        handshake_sender: Sender<Handshake>,
+        ws_sender: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
+        ws_receiver: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
     ) -> Result<Self, SpanErr<PhonexError>> {
         Ok(Self {
-            rx: Arc::new(Mutex::new(rx)),
-            tx: Arc::new(tx),
-            sender: Arc::new(Mutex::new(sender)),
-            receiver: Arc::new(Mutex::new(receiver)),
+            handshake_receiver: Arc::new(Mutex::new(handshake_receiver)),
+            handshake_sender: Arc::new(handshake_sender),
+            ws_sender: Arc::new(Mutex::new(ws_sender)),
+            ws_receiver: Arc::new(Mutex::new(ws_receiver)),
         })
     }
 
@@ -49,21 +49,21 @@ impl WebSocket {
         self.ping().await?;
         self.register().await?;
 
-        let sender = Arc::clone(&self.sender);
-        let rx = Arc::clone(&self.rx);
+        let ws_sender = Arc::clone(&self.ws_sender);
+        let handshake_receiver = Arc::clone(&self.handshake_receiver);
 
         let mut send_task = tokio::spawn(async move {
-            let mut rx = rx.lock().await;
+            let mut handshake_receiver = handshake_receiver.lock().await;
 
             loop {
                 tokio::select! {
-                    val = rx.recv() => {
+                    val = handshake_receiver.recv() => {
                         let response = val.unwrap();
                         match response {
                             Handshake::SessionDescription(v) => {
                                 let m = signal::Message::new_session_description_message(v.target_id, v.sdp).unwrap().try_to_string().unwrap();
 
-                                if let Err(e) = sender.lock().await
+                                if let Err(e) = ws_sender.lock().await
                                     .send(Message::Text(m.into()))
                                     .await
                                 {
@@ -73,7 +73,7 @@ impl WebSocket {
                             Handshake::Candidate(v) => {
                                 let m = signal::Message::new_candidate_message(v.target_id, v.candidate).unwrap().try_to_string().unwrap();
 
-                                if let Err(e) = sender.lock().await
+                                if let Err(e) = ws_sender.lock().await
                                     .send(Message::Text(m.into()))
                                     .await
                                 {
@@ -86,12 +86,15 @@ impl WebSocket {
             }
         });
 
-        let receiver = Arc::clone(&self.receiver);
-        let tx = Arc::clone(&self.tx);
+        let ws_receiver = Arc::clone(&self.ws_receiver);
+        let handshake_sender = Arc::clone(&self.handshake_sender);
 
         let mut recv_task = tokio::spawn(async move {
-            while let Some(Ok(msg)) = receiver.lock().await.next().await {
-                if process_message(Arc::clone(&tx), msg).await.is_break() {
+            while let Some(Ok(msg)) = ws_receiver.lock().await.next().await {
+                if process_message(Arc::clone(&handshake_sender), msg)
+                    .await
+                    .is_break()
+                {
                     break;
                 }
             }
@@ -111,9 +114,9 @@ impl WebSocket {
 
     #[instrument(skip_all, name = "websocket_ping", level = "trace")]
     async fn ping(&mut self) -> Result<(), SpanErr<PhonexError>> {
-        let mut sender = self.sender.lock().await;
+        let mut ws_sender = self.ws_sender.lock().await;
 
-        sender
+        ws_sender
             .send(Message::Ping(axum::body::Bytes::from_static(
                 b"Hello, Server!",
             )))
@@ -130,9 +133,9 @@ impl WebSocket {
             .try_to_string()
             .unwrap();
 
-        let mut sender = self.sender.lock().await;
+        let mut ws_sender = self.ws_sender.lock().await;
 
-        sender
+        ws_sender
             .send(Message::Text(register.into()))
             .await
             .map_err(PhonexError::SendWebSocketMessage)?;
@@ -142,7 +145,10 @@ impl WebSocket {
 }
 
 #[instrument(skip_all, name = "process_message", level = "trace")]
-async fn process_message(tx: Arc<Sender<Handshake>>, msg: Message) -> ControlFlow<(), ()> {
+async fn process_message(
+    handshake_sender: Arc<Sender<Handshake>>,
+    msg: Message,
+) -> ControlFlow<(), ()> {
     match msg {
         Message::Text(message) => {
             let deserialized: signal::Message = serde_json::from_str(&message).unwrap();
@@ -155,23 +161,25 @@ async fn process_message(tx: Arc<Sender<Handshake>>, msg: Message) -> ControlFlo
 
                     println!("sdp: {:?}", session_description_message.sdp.unmarshal());
 
-                    tx.send(Handshake::SessionDescription(SessionDescription {
-                        target_id: session_description_message.target_id,
-                        sdp: session_description_message.sdp,
-                    }))
-                    .await
-                    .unwrap();
+                    handshake_sender
+                        .send(Handshake::SessionDescription(SessionDescription {
+                            target_id: session_description_message.target_id,
+                            sdp: session_description_message.sdp,
+                        }))
+                        .await
+                        .unwrap();
                 }
                 RequestType::Candidate => {
                     let candidate_message: signal::CandidateMessage =
                         serde_json::from_str(&deserialized.raw).unwrap();
 
-                    tx.send(Handshake::Candidate(Candidate {
-                        target_id: candidate_message.target_id,
-                        candidate: candidate_message.candidate,
-                    }))
-                    .await
-                    .unwrap();
+                    handshake_sender
+                        .send(Handshake::Candidate(Candidate {
+                            target_id: candidate_message.target_id,
+                            candidate: candidate_message.candidate,
+                        }))
+                        .await
+                        .unwrap();
                 }
                 RequestType::Ping => {
                     println!(">>> receive ping");
