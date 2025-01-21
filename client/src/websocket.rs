@@ -17,6 +17,7 @@ use signal::message::{Message, RequestType};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
+use tokio_tungstenite::tungstenite::Utf8Bytes;
 use tokio_tungstenite::{tungstenite, MaybeTlsStream, WebSocketStream};
 use tracing::instrument;
 use tracing_spanned::SpanErr;
@@ -189,36 +190,10 @@ async fn process_message(
 ) -> ControlFlow<(), ()> {
     match msg {
         tungstenite::Message::Text(message) => {
-            let deserialized: Message = serde_json::from_str(&message).unwrap();
-
-            match deserialized.request_type {
-                RequestType::Register => {}
-                RequestType::SessionDescription => {
-                    if let Err(e) =
-                        handle_session_description_message(handshake_sender, deserialized.clone())
-                            .await
-                    {
-                        println!("{e}");
-                        return ControlFlow::Break(());
-                    }
-                }
-                RequestType::Candidate => {
-                    if let Err(e) =
-                        handle_candidate_message(handshake_sender, deserialized.clone()).await
-                    {
-                        println!("{e}");
-                        return ControlFlow::Break(());
-                    }
-                }
-                RequestType::Ping => {
-                    println!(">>> receive ping");
-                }
-                RequestType::Pong => {
-                    println!(">>> sent pong");
-                }
-            }
-
-            println!("{:?}", deserialized);
+            if let Err(e) = handle_message(handshake_sender, message).await {
+                println!("handle message error: {e}");
+                return ControlFlow::Break(());
+            };
         }
         tungstenite::Message::Binary(d) => {
             println!(">>> got {} bytes: {:?}", d.len(), d);
@@ -248,6 +223,34 @@ async fn process_message(
     }
 
     ControlFlow::Continue(())
+}
+
+#[instrument(skip_all, name = "handle_message", level = "trace")]
+async fn handle_message(
+    handshake_sender: Arc<Sender<Handshake>>,
+    m: Utf8Bytes,
+) -> Result<(), PhonexError> {
+    let deserialized: Message = serde_json::from_str(&m).unwrap();
+
+    match deserialized.request_type {
+        RequestType::Register => {}
+        RequestType::SessionDescription => {
+            handle_session_description_message(handshake_sender, deserialized.clone()).await?;
+        }
+        RequestType::Candidate => {
+            handle_candidate_message(handshake_sender, deserialized.clone()).await?;
+        }
+        RequestType::Ping => {
+            println!(">>> receive ping");
+        }
+        RequestType::Pong => {
+            println!(">>> sent pong");
+        }
+    }
+
+    println!("{:?}", deserialized);
+
+    Ok(())
 }
 
 #[instrument(skip_all, name = "handle_session_description_message", level = "trace")]
