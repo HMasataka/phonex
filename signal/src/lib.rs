@@ -1,4 +1,4 @@
-use errors::PhonexError;
+use errors::CommonError;
 use serde::{Deserialize, Serialize};
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
@@ -18,9 +18,9 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn new_register_message(id: String) -> Result<Self, PhonexError> {
+    pub fn new_register_message(id: String) -> Result<Self, CommonError> {
         let register_message = RegisterMessage { id };
-        let r = serde_json::to_string(&register_message).map_err(PhonexError::FromJSONError)?;
+        let r = serde_json::to_string(&register_message).map_err(CommonError::FromJSONError)?;
 
         Ok(Self {
             request_type: RequestType::Register,
@@ -31,10 +31,10 @@ impl Message {
     pub fn new_session_description_message(
         target_id: String,
         sdp: RTCSessionDescription,
-    ) -> Result<Self, PhonexError> {
+    ) -> Result<Self, CommonError> {
         let session_description_message = SessionDescriptionMessage { target_id, sdp };
         let r = serde_json::to_string(&session_description_message)
-            .map_err(PhonexError::FromJSONError)?;
+            .map_err(CommonError::FromJSONError)?;
 
         Ok(Self {
             request_type: RequestType::SessionDescription,
@@ -45,12 +45,12 @@ impl Message {
     pub fn new_candidate_message(
         target_id: String,
         candidate: String,
-    ) -> Result<Self, PhonexError> {
+    ) -> Result<Self, CommonError> {
         let candidate_message = CandidateMessage {
             target_id,
             candidate,
         };
-        let r = serde_json::to_string(&candidate_message).map_err(PhonexError::FromJSONError)?;
+        let r = serde_json::to_string(&candidate_message).map_err(CommonError::FromJSONError)?;
 
         Ok(Self {
             request_type: RequestType::Candidate,
@@ -58,8 +58,8 @@ impl Message {
         })
     }
 
-    pub fn try_to_string(&self) -> Result<String, PhonexError> {
-        return serde_json::to_string(self).map_err(PhonexError::FromJSONError);
+    pub fn try_to_string(&self) -> Result<String, CommonError> {
+        return serde_json::to_string(self).map_err(CommonError::FromJSONError);
     }
 }
 

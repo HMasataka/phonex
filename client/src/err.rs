@@ -1,5 +1,6 @@
 use std::string::FromUtf8Error;
 
+use errors::CommonError;
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
 use tokio_tungstenite::tungstenite;
@@ -9,6 +10,8 @@ use crate::message::Handshake;
 
 #[derive(Error, Debug)]
 pub enum PhonexError {
+    #[error("common error occurred. {0}")]
+    WrapCommonError(CommonError),
     #[error("failed to initialize tracing subscriber. {0}")]
     InitializeTracingSubscriber(TryInitError),
     #[error("failed to initialize websocekt connection. {0}")]

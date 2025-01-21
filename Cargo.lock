@@ -468,6 +468,7 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "axum 0.8.1",
+ "errors",
  "futures",
  "futures-util",
  "serde",
@@ -688,6 +689,8 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "tokio",
+ "tokio-tungstenite 0.26.1",
  "tracing",
  "tracing-error",
  "tracing-subscriber",

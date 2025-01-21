@@ -10,3 +10,5 @@ tracing = "0.1.40"
 tracing-error = "0.2.0"
 tracing-subscriber = "0.3.18"
 tracing_spanned = { git = "https://github.com/comnipl/tracing_spanned", rev = "6fed6097d13d117e4d35120f56450b156c33b77e" }
+tokio = { version = "1.42.0", features = ["full"] }
+tokio-tungstenite = "0.26.1"

@@ -113,9 +113,9 @@ impl WebSocket {
     #[instrument(skip_all, name = "websocket_register", level = "trace")]
     async fn register(&mut self) -> Result<(), SpanErr<PhonexError>> {
         let register = signal::Message::new_register_message(ID.into())
-            .unwrap()
+            .map_err(PhonexError::WrapCommonError)?
             .try_to_string()
-            .unwrap();
+            .map_err(PhonexError::WrapCommonError)?;
 
         let mut ws_sender = self.ws_sender.lock().await;
 
@@ -144,7 +144,6 @@ async fn send_message(
                             return ControlFlow::Break(());
                         }
                     };
-
                     s
                 }
                 Err(e) => {

@@ -1,10 +1,11 @@
 use std::string::FromUtf8Error;
 
 use thiserror::Error;
+use tokio_tungstenite::tungstenite;
 use tracing_subscriber::util::TryInitError;
 
 #[derive(Error, Debug)]
-pub enum PhonexError {
+pub enum CommonError {
     #[error("failed to initialize tracing subscriber. {0}")]
     InitializeTracingSubscriber(TryInitError),
     #[error("failed to send message: {0}")]
@@ -35,4 +36,6 @@ pub enum PhonexError {
     FromJSONError(serde_json::Error),
     #[error("serialize to json error: {0}")]
     ToJSONError(serde_json::Error),
+    #[error("failed to send websocket message: {0}")]
+    SendWebSocketMessage(tungstenite::Error),
 }
