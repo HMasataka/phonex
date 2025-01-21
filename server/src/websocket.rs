@@ -11,7 +11,7 @@ use futures::sink::SinkExt;
 use futures::stream::SplitSink;
 use futures::stream::SplitStream;
 use futures_util::StreamExt;
-use signal::RequestType;
+use signal::message::RequestType;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
@@ -61,7 +61,7 @@ impl WebSocket {
                         let response = val.unwrap();
                         match response {
                             Handshake::SessionDescription(v) => {
-                                let m = signal::Message::new_session_description_message(v.target_id, v.sdp).unwrap().try_to_string().unwrap();
+                                let m = signal::message::Message::new_session_description_message(v.target_id, v.sdp).unwrap().try_to_string().unwrap();
 
                                 if let Err(e) = sender.lock().await
                                     .send(Message::Text(m.into()))
@@ -71,7 +71,7 @@ impl WebSocket {
                                 };
                             }
                             Handshake::Candidate(v) => {
-                                let m = signal::Message::new_candidate_message(v.target_id, v.candidate).unwrap().try_to_string().unwrap();
+                                let m = signal::message::Message::new_candidate_message(v.target_id, v.candidate).unwrap().try_to_string().unwrap();
 
                                 if let Err(e) = sender.lock().await
                                     .send(Message::Text(m.into()))
@@ -125,7 +125,7 @@ impl WebSocket {
 
     #[instrument(skip_all, name = "websocket_register", level = "trace")]
     async fn register(&mut self) -> Result<(), SpanErr<PhonexError>> {
-        let register = signal::Message::new_register_message(ID.into())
+        let register = signal::message::Message::new_register_message(ID.into())
             .unwrap()
             .try_to_string()
             .unwrap();
@@ -145,12 +145,12 @@ impl WebSocket {
 async fn process_message(tx: Arc<Sender<Handshake>>, msg: Message) -> ControlFlow<(), ()> {
     match msg {
         Message::Text(message) => {
-            let deserialized: signal::Message = serde_json::from_str(&message).unwrap();
+            let deserialized: signal::message::Message = serde_json::from_str(&message).unwrap();
 
             match deserialized.request_type {
                 RequestType::Register => {}
                 RequestType::SessionDescription => {
-                    let session_description_message: signal::SessionDescriptionMessage =
+                    let session_description_message: signal::message::SessionDescriptionMessage =
                         serde_json::from_str(&deserialized.raw).unwrap();
 
                     println!("sdp: {:?}", session_description_message.sdp.unmarshal());
@@ -163,7 +163,7 @@ async fn process_message(tx: Arc<Sender<Handshake>>, msg: Message) -> ControlFlo
                     .unwrap();
                 }
                 RequestType::Candidate => {
-                    let candidate_message: signal::CandidateMessage =
+                    let candidate_message: signal::message::CandidateMessage =
                         serde_json::from_str(&deserialized.raw).unwrap();
 
                     tx.send(Handshake::Candidate(Candidate {

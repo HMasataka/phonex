@@ -1,6 +1,6 @@
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-use signal::{CandidateMessage, SessionDescriptionMessage};
+use signal::message::{CandidateMessage, SessionDescriptionMessage};
 
 #[derive(Debug)]
 pub enum Handshake {
