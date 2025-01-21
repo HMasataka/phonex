@@ -11,11 +11,13 @@ use futures::sink::SinkExt;
 use futures::stream::SplitSink;
 use futures::stream::SplitStream;
 use futures_util::StreamExt;
-use signal::message::RequestType;
+use signal::message::CandidateMessage;
+use signal::message::SessionDescriptionMessage;
+use signal::message::{Message, RequestType};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
-use tokio_tungstenite::{tungstenite::Message, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::{tungstenite, MaybeTlsStream, WebSocketStream};
 use tracing::instrument;
 use tracing_spanned::SpanErr;
 
@@ -24,7 +26,8 @@ const ID: &str = "2";
 pub struct WebSocket {
     handshake_receiver: Arc<Mutex<Receiver<Handshake>>>,
     handshake_sender: Arc<Sender<Handshake>>,
-    ws_sender: Arc<Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>>,
+    ws_sender:
+        Arc<Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, tungstenite::Message>>>,
     ws_receiver: Arc<Mutex<SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>>>,
 }
 
@@ -33,7 +36,7 @@ impl WebSocket {
     pub fn new(
         handshake_receiver: Receiver<Handshake>,
         handshake_sender: Sender<Handshake>,
-        ws_sender: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
+        ws_sender: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, tungstenite::Message>,
         ws_receiver: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
     ) -> Result<Self, SpanErr<PhonexError>> {
         Ok(Self {
@@ -101,7 +104,7 @@ impl WebSocket {
         let mut ws_sender = self.ws_sender.lock().await;
 
         ws_sender
-            .send(Message::Ping(axum::body::Bytes::from_static(
+            .send(tungstenite::Message::Ping(axum::body::Bytes::from_static(
                 b"Hello, Server!",
             )))
             .await
@@ -112,7 +115,7 @@ impl WebSocket {
 
     #[instrument(skip_all, name = "websocket_register", level = "trace")]
     async fn register(&mut self) -> Result<(), SpanErr<PhonexError>> {
-        let register = signal::message::Message::new_register_message(ID.into())
+        let register = Message::new_register_message(ID.into())
             .map_err(PhonexError::WrapSignalError)?
             .try_to_string()
             .map_err(PhonexError::WrapSignalError)?;
@@ -120,7 +123,7 @@ impl WebSocket {
         let mut ws_sender = self.ws_sender.lock().await;
 
         ws_sender
-            .send(Message::Text(register.into()))
+            .send(tungstenite::Message::Text(register.into()))
             .await
             .map_err(PhonexError::SendWebSocketMessage)?;
 
@@ -131,37 +134,41 @@ impl WebSocket {
 #[instrument(skip_all, name = "send_message", level = "trace")]
 async fn send_message(
     handshake: Handshake,
-    ws_sender: Arc<Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>>,
+    ws_sender: Arc<
+        Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, tungstenite::Message>>,
+    >,
 ) -> ControlFlow<(), ()> {
     match handshake {
         Handshake::SessionDescription(v) => {
-            let m =
-                match signal::message::Message::new_session_description_message(v.target_id, v.sdp)
-                {
-                    Ok(m) => {
-                        let s = match m.try_to_string() {
-                            Ok(s) => s,
-                            Err(e) => {
-                                println!("convert error: {e}");
-                                return ControlFlow::Break(());
-                            }
-                        };
-                        s
-                    }
-                    Err(e) => {
-                        println!("build sdp error: {e}");
-                        return ControlFlow::Break(());
-                    }
-                };
+            let m = match Message::new_session_description_message(v.target_id, v.sdp) {
+                Ok(m) => {
+                    let s = match m.try_to_string() {
+                        Ok(s) => s,
+                        Err(e) => {
+                            println!("convert error: {e}");
+                            return ControlFlow::Break(());
+                        }
+                    };
+                    s
+                }
+                Err(e) => {
+                    println!("build sdp error: {e}");
+                    return ControlFlow::Break(());
+                }
+            };
 
-            if let Err(e) = ws_sender.lock().await.send(Message::Text(m.into())).await {
+            if let Err(e) = ws_sender
+                .lock()
+                .await
+                .send(tungstenite::Message::Text(m.into()))
+                .await
+            {
                 println!("Could not send Close due to {e:?}, probably it is ok?");
                 return ControlFlow::Break(());
             };
         }
         Handshake::Candidate(v) => {
-            let m = match signal::message::Message::new_candidate_message(v.target_id, v.candidate)
-            {
+            let m = match Message::new_candidate_message(v.target_id, v.candidate) {
                 Ok(m) => {
                     let s = match m.try_to_string() {
                         Ok(s) => s,
@@ -179,7 +186,12 @@ async fn send_message(
                 }
             };
 
-            if let Err(e) = ws_sender.lock().await.send(Message::Text(m.into())).await {
+            if let Err(e) = ws_sender
+                .lock()
+                .await
+                .send(tungstenite::Message::Text(m.into()))
+                .await
+            {
                 println!("Could not send Close due to {e:?}, probably it is ok?");
                 return ControlFlow::Break(());
             };
@@ -192,16 +204,16 @@ async fn send_message(
 #[instrument(skip_all, name = "process_message", level = "trace")]
 async fn process_message(
     handshake_sender: Arc<Sender<Handshake>>,
-    msg: Message,
+    msg: tungstenite::Message,
 ) -> ControlFlow<(), ()> {
     match msg {
-        Message::Text(message) => {
-            let deserialized: signal::message::Message = serde_json::from_str(&message).unwrap();
+        tungstenite::Message::Text(message) => {
+            let deserialized: Message = serde_json::from_str(&message).unwrap();
 
             match deserialized.request_type {
                 RequestType::Register => {}
                 RequestType::SessionDescription => {
-                    let session_description_message: signal::message::SessionDescriptionMessage =
+                    let session_description_message: SessionDescriptionMessage =
                         serde_json::from_str(&deserialized.raw).unwrap();
 
                     println!("sdp: {:?}", session_description_message.sdp.unmarshal());
@@ -215,7 +227,7 @@ async fn process_message(
                         .unwrap();
                 }
                 RequestType::Candidate => {
-                    let candidate_message: signal::message::CandidateMessage =
+                    let candidate_message: CandidateMessage =
                         serde_json::from_str(&deserialized.raw).unwrap();
 
                     handshake_sender
@@ -236,10 +248,10 @@ async fn process_message(
 
             println!("{:?}", deserialized);
         }
-        Message::Binary(d) => {
+        tungstenite::Message::Binary(d) => {
             println!(">>> got {} bytes: {:?}", d.len(), d);
         }
-        Message::Close(c) => {
+        tungstenite::Message::Close(c) => {
             if let Some(cf) = c {
                 println!(
                     ">>> got close with code {} and reason `{}`",
@@ -251,14 +263,14 @@ async fn process_message(
             return ControlFlow::Break(());
         }
 
-        Message::Pong(v) => {
+        tungstenite::Message::Pong(v) => {
             println!(">>> got pong with {v:?}");
         }
-        Message::Ping(v) => {
+        tungstenite::Message::Ping(v) => {
             println!(">>> got ping with {v:?}");
         }
 
-        Message::Frame(_) => {
+        tungstenite::Message::Frame(_) => {
             unreachable!("This is never supposed to happen")
         }
     }
