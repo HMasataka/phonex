@@ -1896,6 +1896,7 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-tungstenite 0.26.1",
  "tracing",
  "tracing-error",
  "tracing-subscriber",
