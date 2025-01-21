@@ -49,8 +49,8 @@ impl WebSocket {
         self.ping().await?;
         self.register().await?;
 
-        let ws_sender = Arc::clone(&self.ws_sender);
         let handshake_receiver = Arc::clone(&self.handshake_receiver);
+        let ws_sender = Arc::clone(&self.ws_sender);
 
         let mut send_task = tokio::spawn(async move {
             let mut handshake_receiver = handshake_receiver.lock().await;
@@ -59,28 +59,12 @@ impl WebSocket {
                 tokio::select! {
                     val = handshake_receiver.recv() => {
                         let response = val.unwrap();
-                        match response {
-                            Handshake::SessionDescription(v) => {
-                                let m = signal::Message::new_session_description_message(v.target_id, v.sdp).unwrap().try_to_string().unwrap();
+                        let ws_sender = Arc::clone(&ws_sender);
 
-                                if let Err(e) = ws_sender.lock().await
-                                    .send(Message::Text(m.into()))
-                                    .await
-                                {
-                                    println!("Could not send Close due to {e:?}, probably it is ok?");
-                                };
-                            }
-                            Handshake::Candidate(v) => {
-                                let m = signal::Message::new_candidate_message(v.target_id, v.candidate).unwrap().try_to_string().unwrap();
-
-                                if let Err(e) = ws_sender.lock().await
-                                    .send(Message::Text(m.into()))
-                                    .await
-                                {
-                                    println!("Could not send Close due to {e:?}, probably it is ok?");
-                                };
-                            }
+                        if send_message(response, ws_sender).await.is_break(){
+                            break;
                         }
+
                     }
                 }
             }
@@ -142,6 +126,65 @@ impl WebSocket {
 
         Ok(())
     }
+}
+
+#[instrument(skip_all, name = "send_message", level = "trace")]
+async fn send_message(
+    handshake: Handshake,
+    ws_sender: Arc<Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>>,
+) -> ControlFlow<(), ()> {
+    match handshake {
+        Handshake::SessionDescription(v) => {
+            let m = match signal::Message::new_session_description_message(v.target_id, v.sdp) {
+                Ok(m) => {
+                    let s = match m.try_to_string() {
+                        Ok(s) => s,
+                        Err(e) => {
+                            println!("convert error: {e}");
+                            return ControlFlow::Break(());
+                        }
+                    };
+
+                    s
+                }
+                Err(e) => {
+                    println!("build sdp error: {e}");
+                    return ControlFlow::Break(());
+                }
+            };
+
+            if let Err(e) = ws_sender.lock().await.send(Message::Text(m.into())).await {
+                println!("Could not send Close due to {e:?}, probably it is ok?");
+                return ControlFlow::Break(());
+            };
+        }
+        Handshake::Candidate(v) => {
+            let m = match signal::Message::new_candidate_message(v.target_id, v.candidate) {
+                Ok(m) => {
+                    let s = match m.try_to_string() {
+                        Ok(s) => s,
+                        Err(e) => {
+                            println!("convert error: {e}");
+                            return ControlFlow::Break(());
+                        }
+                    };
+
+                    s
+                }
+                Err(e) => {
+                    println!("build candidate error: {e}");
+                    return ControlFlow::Break(());
+                }
+            };
+
+            if let Err(e) = ws_sender.lock().await.send(Message::Text(m.into())).await {
+                println!("Could not send Close due to {e:?}, probably it is ok?");
+                return ControlFlow::Break(());
+            };
+        }
+    }
+
+    ControlFlow::Continue(())
 }
 
 #[instrument(skip_all, name = "process_message", level = "trace")]
