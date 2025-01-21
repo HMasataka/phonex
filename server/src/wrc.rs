@@ -24,8 +24,8 @@ use webrtc::peer_connection::RTCPeerConnection;
 const TARGET: &str = "2";
 
 pub struct WebRTC {
-    rx: Cell<Receiver<Handshake>>,
-    tx: Sender<Handshake>,
+    handshake_receiver: Cell<Receiver<Handshake>>,
+    handshake_sender: Sender<Handshake>,
     peer_connection: Arc<RTCPeerConnection>,
     pending_candidates: Arc<Mutex<Vec<RTCIceCandidate>>>,
 }
@@ -64,7 +64,7 @@ async fn initialize_peer_connection() -> Result<Arc<RTCPeerConnection>, SpanErr<
 
 #[instrument(skip_all, name = "on_ice_candidate", level = "trace")]
 fn on_ice_candidate(
-    tx: Sender<Handshake>,
+    handshake_sender: Sender<Handshake>,
     peer_connection: Arc<RTCPeerConnection>,
     pending_candidates: Arc<Mutex<Vec<RTCIceCandidate>>>,
 ) -> Result<OnLocalCandidateHdlrFn, SpanErr<PhonexError>> {
@@ -73,7 +73,7 @@ fn on_ice_candidate(
 
         let peer_connection = peer_connection.clone();
         let pending_candidates = pending_candidates.clone();
-        let tx = tx.clone();
+        let handshake_sender = handshake_sender.clone();
 
         Box::pin(async move {
             if let Some(candidate) = c {
@@ -87,13 +87,14 @@ fn on_ice_candidate(
                         .map_err(PhonexError::ConvertToJson)
                         .unwrap();
 
-                    tx.send(Handshake::Candidate(Candidate {
-                        target_id: candidate.stats_id, // FIXME
-                        candidate: req.candidate,
-                    }))
-                    .await
-                    .map_err(PhonexError::SendHandshakeResponse)
-                    .unwrap();
+                    handshake_sender
+                        .send(Handshake::Candidate(Candidate {
+                            target_id: candidate.stats_id, // FIXME
+                            candidate: req.candidate,
+                        }))
+                        .await
+                        .map_err(PhonexError::SendHandshakeResponse)
+                        .unwrap();
                 }
             }
         })
@@ -103,15 +104,15 @@ fn on_ice_candidate(
 impl WebRTC {
     #[instrument(skip_all, name = "webrtc_new", level = "trace")]
     pub async fn new(
-        rx: Cell<Receiver<Handshake>>,
-        tx: Sender<Handshake>,
+        handshake_receiver: Cell<Receiver<Handshake>>,
+        handshake_sender: Sender<Handshake>,
     ) -> Result<Self, SpanErr<PhonexError>> {
         let peer_connection = initialize_peer_connection().await?;
         let pending_candidates: Arc<Mutex<Vec<RTCIceCandidate>>> = Arc::new(Mutex::new(vec![]));
 
         Ok(Self {
-            rx,
-            tx,
+            handshake_receiver,
+            handshake_sender,
             peer_connection,
             pending_candidates,
         })
@@ -120,9 +121,10 @@ impl WebRTC {
     #[instrument(skip_all, name = "webrtc_handshake", level = "trace")]
     pub async fn handshake(&mut self) -> Result<(), SpanErr<PhonexError>> {
         let pc = Arc::clone(&self.peer_connection);
-        let tx1 = self.tx.clone();
+        let handshake_sender = self.handshake_sender.clone();
+
         pc.on_ice_candidate(on_ice_candidate(
-            tx1,
+            handshake_sender,
             Arc::clone(&self.peer_connection),
             Arc::clone(&self.pending_candidates),
         )?);
@@ -131,7 +133,7 @@ impl WebRTC {
 
         loop {
             tokio::select! {
-                val = self.rx.get_mut().recv()=> {
+                val = self.handshake_receiver.get_mut().recv()=> {
                     let request = val.unwrap();
                      if self.handle_handshake(request).await.is_break(){
                         break;
@@ -151,7 +153,7 @@ impl WebRTC {
             .await
             .map_err(PhonexError::CreateNewAnswer)?;
 
-        self.tx
+        self.handshake_sender
             .send(Handshake::SessionDescription(SessionDescription {
                 target_id: TARGET.into(),
                 sdp: answer.clone(),
@@ -174,7 +176,7 @@ impl WebRTC {
         for candidate in &*pending_candidates {
             let req = candidate.to_json().map_err(PhonexError::ConvertToJson)?;
 
-            self.tx
+            self.handshake_sender
                 .send(Handshake::Candidate(Candidate {
                     target_id: TARGET.into(),
                     candidate: req.candidate,

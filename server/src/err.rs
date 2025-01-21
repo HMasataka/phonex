@@ -1,5 +1,6 @@
 use std::string::FromUtf8Error;
 
+use signal::err::SignalError;
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
 use tokio_tungstenite::tungstenite;
@@ -9,6 +10,8 @@ use crate::message::Handshake;
 
 #[derive(Error, Debug)]
 pub enum PhonexError {
+    #[error("signal error occurred. {0}")]
+    WrapSignalError(SignalError),
     #[error("failed to initialize tracing subscriber. {0}")]
     InitializeTracingSubscriber(TryInitError),
     #[error("failed to initialize websocekt connection. {0}")]
@@ -35,4 +38,6 @@ pub enum PhonexError {
     ConvertToJson(webrtc::Error),
     #[error("failed to send candidate response: {0}")]
     SendHandshakeResponse(SendError<Handshake>),
+    #[error("to json error: {0}")]
+    ToJSON(serde_json::Error),
 }
