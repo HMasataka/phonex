@@ -108,7 +108,7 @@ impl WebSocket {
                 b"Hello, Server!",
             )))
             .await
-            .expect("Can not send!");
+            .map_err(PhonexError::SendWebSocketMessage)?;
 
         Ok(())
     }
@@ -194,30 +194,21 @@ async fn process_message(
             match deserialized.request_type {
                 RequestType::Register => {}
                 RequestType::SessionDescription => {
-                    let session_description_message: SessionDescriptionMessage =
-                        serde_json::from_str(&deserialized.raw).unwrap();
-
-                    println!("sdp: {:?}", session_description_message.sdp.unmarshal());
-
-                    handshake_sender
-                        .send(Handshake::SessionDescription(SessionDescription {
-                            target_id: session_description_message.target_id,
-                            sdp: session_description_message.sdp,
-                        }))
-                        .await
-                        .unwrap();
+                    if let Err(e) =
+                        handle_session_description_message(handshake_sender, deserialized.clone())
+                            .await
+                    {
+                        println!("{e}");
+                        return ControlFlow::Break(());
+                    }
                 }
                 RequestType::Candidate => {
-                    let candidate_message: CandidateMessage =
-                        serde_json::from_str(&deserialized.raw).unwrap();
-
-                    handshake_sender
-                        .send(Handshake::Candidate(Candidate {
-                            target_id: candidate_message.target_id,
-                            candidate: candidate_message.candidate,
-                        }))
-                        .await
-                        .unwrap();
+                    if let Err(e) =
+                        handle_candidate_message(handshake_sender, deserialized.clone()).await
+                    {
+                        println!("{e}");
+                        return ControlFlow::Break(());
+                    }
                 }
                 RequestType::Ping => {
                     println!(">>> receive ping");
@@ -257,6 +248,46 @@ async fn process_message(
     }
 
     ControlFlow::Continue(())
+}
+
+#[instrument(skip_all, name = "handle_session_description_message", level = "trace")]
+async fn handle_session_description_message(
+    handshake_sender: Arc<Sender<Handshake>>,
+    m: Message,
+) -> Result<(), PhonexError> {
+    let session_description_message: SessionDescriptionMessage =
+        serde_json::from_str(&m.raw).map_err(PhonexError::ToJSON)?;
+
+    println!("sdp: {:?}", session_description_message.sdp.unmarshal());
+
+    handshake_sender
+        .send(Handshake::SessionDescription(SessionDescription {
+            target_id: session_description_message.target_id,
+            sdp: session_description_message.sdp,
+        }))
+        .await
+        .map_err(PhonexError::SendHandshakeResponse)?;
+
+    Ok(())
+}
+
+#[instrument(skip_all, name = "handle_candidate_message", level = "trace")]
+async fn handle_candidate_message(
+    handshake_sender: Arc<Sender<Handshake>>,
+    m: Message,
+) -> Result<(), PhonexError> {
+    let candidate_message: CandidateMessage =
+        serde_json::from_str(&m.raw).map_err(PhonexError::ToJSON)?;
+
+    handshake_sender
+        .send(Handshake::Candidate(Candidate {
+            target_id: candidate_message.target_id,
+            candidate: candidate_message.candidate,
+        }))
+        .await
+        .map_err(PhonexError::SendHandshakeResponse)?;
+
+    Ok(())
 }
 
 #[instrument(

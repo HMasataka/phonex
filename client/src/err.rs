@@ -40,4 +40,6 @@ pub enum PhonexError {
     ConvertToJson(webrtc::Error),
     #[error("failed to send candidate response: {0}")]
     SendHandshakeResponse(SendError<Handshake>),
+    #[error("to json error: {0}")]
+    ToJSON(serde_json::Error),
 }

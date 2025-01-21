@@ -3,7 +3,7 @@ use crate::err::SignalError;
 use serde::{Deserialize, Serialize};
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum RequestType {
     Ping,
     Pong,
@@ -12,7 +12,7 @@ pub enum RequestType {
     Candidate,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Message {
     pub request_type: RequestType,
     pub raw: String,
