@@ -140,19 +140,10 @@ async fn send_message(
 ) -> ControlFlow<(), ()> {
     match handshake {
         Handshake::SessionDescription(v) => {
-            let m = match Message::new_session_description_message(v.target_id, v.sdp) {
-                Ok(m) => {
-                    let s = match m.try_to_string() {
-                        Ok(s) => s,
-                        Err(e) => {
-                            println!("convert error: {e}");
-                            return ControlFlow::Break(());
-                        }
-                    };
-                    s
-                }
+            let m = match new_string_session_description_message(v) {
+                Ok(m) => m,
                 Err(e) => {
-                    println!("build sdp error: {e}");
+                    println!("build sdp error {e}");
                     return ControlFlow::Break(());
                 }
             };
@@ -168,20 +159,10 @@ async fn send_message(
             };
         }
         Handshake::Candidate(v) => {
-            let m = match Message::new_candidate_message(v.target_id, v.candidate) {
-                Ok(m) => {
-                    let s = match m.try_to_string() {
-                        Ok(s) => s,
-                        Err(e) => {
-                            println!("convert error: {e}");
-                            return ControlFlow::Break(());
-                        }
-                    };
-
-                    s
-                }
+            let m = match new_string_candidate_message(v) {
+                Ok(m) => m,
                 Err(e) => {
-                    println!("build candidate error: {e}");
+                    println!("build candidate error {e}");
                     return ControlFlow::Break(());
                 }
             };
@@ -276,4 +257,28 @@ async fn process_message(
     }
 
     ControlFlow::Continue(())
+}
+
+#[instrument(
+    skip_all,
+    name = "new_string_session_description_message",
+    level = "trace"
+)]
+fn new_string_session_description_message(v: SessionDescription) -> Result<String, PhonexError> {
+    let m = Message::new_session_description_message(v.target_id, v.sdp)
+        .map_err(PhonexError::WrapSignalError)?
+        .try_to_string()
+        .map_err(PhonexError::WrapSignalError)?;
+
+    Ok(m)
+}
+
+#[instrument(skip_all, name = "new_string_candidate_message", level = "trace")]
+fn new_string_candidate_message(v: Candidate) -> Result<String, PhonexError> {
+    let m = Message::new_candidate_message(v.target_id, v.candidate)
+        .map_err(PhonexError::WrapSignalError)?
+        .try_to_string()
+        .map_err(PhonexError::WrapSignalError)?;
+
+    Ok(m)
 }
