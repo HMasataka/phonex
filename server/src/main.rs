@@ -1,59 +1,23 @@
+mod data_channel;
 mod err;
-mod handshake;
+mod message;
+mod websocket;
+mod wrc;
 
-use std::sync::Arc;
-use std::sync::Weak;
-use tokio::sync::mpsc::Sender;
-use tokio::sync::Mutex;
-
-use anyhow::Result;
-use clap::Parser;
-use dotenvy::dotenv;
 use err::PhonexError;
-use tokio::time::Duration;
+use futures_util::StreamExt;
+use message::Handshake;
+use std::cell::Cell;
+use std::time::Instant;
+use tokio::sync::mpsc;
 use tracing::instrument;
 use tracing_error::ErrorLayer;
 use tracing_spanned::SpanErr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
-use webrtc::api::interceptor_registry::register_default_interceptors;
-use webrtc::api::media_engine::MediaEngine;
-use webrtc::api::APIBuilder;
-use webrtc::data_channel::data_channel_message::DataChannelMessage;
-use webrtc::data_channel::RTCDataChannel;
-use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
-use webrtc::ice_transport::ice_gatherer::OnLocalCandidateHdlrFn;
-use webrtc::ice_transport::ice_server::RTCIceServer;
-use webrtc::interceptor::registry::Registry;
-use webrtc::peer_connection::configuration::RTCConfiguration;
-use webrtc::peer_connection::math_rand_alpha;
-use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
-use webrtc::peer_connection::OnDataChannelHdlrFn;
-use webrtc::peer_connection::OnPeerConnectionStateChangeHdlrFn;
-use webrtc::peer_connection::RTCPeerConnection;
 
-#[macro_use]
-extern crate lazy_static;
+use tokio_tungstenite::connect_async;
 
-lazy_static! {}
-
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
-struct Args {
-    #[clap(
-        short = 'o',
-        long = "offer_address",
-        env,
-        default_value = "0.0.0.0:50000"
-    )]
-    offer_address: String,
-    #[clap(
-        short = 'a',
-        long = "answer_address",
-        env,
-        default_value = "0.0.0.0:60000"
-    )]
-    answer_address: String,
-}
+const SERVER: &str = "ws://127.0.0.1:3000/ws";
 
 #[instrument(skip_all, name = "initialize_tracing_subscriber", level = "trace")]
 fn initialize_tracing_subscriber() -> Result<(), SpanErr<PhonexError>> {
@@ -70,166 +34,35 @@ fn initialize_tracing_subscriber() -> Result<(), SpanErr<PhonexError>> {
     Ok(())
 }
 
-#[instrument(skip_all, name = "initialize_peer_connection", level = "trace")]
-async fn initialize_peer_connection() -> Result<Arc<RTCPeerConnection>, SpanErr<PhonexError>> {
-    let config = RTCConfiguration {
-        ice_servers: vec![RTCIceServer {
-            urls: vec!["stun:stun.l.google.com:19302".to_owned()],
-            ..Default::default()
-        }],
-        ..Default::default()
-    };
-
-    let mut m = MediaEngine::default();
-    m.register_default_codecs()
-        .map_err(PhonexError::InitializeRegistry)?;
-
-    let mut registry = Registry::new();
-    registry =
-        register_default_interceptors(registry, &mut m).map_err(PhonexError::InitializeRegistry)?;
-
-    let api = APIBuilder::new()
-        .with_media_engine(m)
-        .with_interceptor_registry(registry)
-        .build();
-
-    let peer_connection = Arc::new(
-        api.new_peer_connection(config)
-            .await
-            .map_err(PhonexError::CreateNewPeerConnection)?,
-    );
-
-    Ok(peer_connection)
-}
-
-#[instrument(skip_all, name = "on_ice_candidate", level = "trace")]
-fn on_ice_candidate(
-    peer_connection: Weak<RTCPeerConnection>,
-    pending_candidates: Arc<Mutex<Vec<RTCIceCandidate>>>,
-    offer_address: String,
-) -> Result<OnLocalCandidateHdlrFn, SpanErr<PhonexError>> {
-    Ok(Box::new(move |c: Option<RTCIceCandidate>| {
-        println!("on ice candidate: {:?}", c);
-
-        let pc = peer_connection.clone();
-        let pending_candidates = Arc::clone(&pending_candidates);
-        let addr = offer_address.clone();
-        Box::pin(async move {
-            if let Some(c) = c {
-                if let Some(pc) = pc.upgrade() {
-                    let desc = pc.remote_description().await;
-                    if desc.is_none() {
-                        let mut cs = pending_candidates.lock().await;
-                        cs.push(c);
-                    } else if let Err(err) = handshake::signal_candidate(&addr, &c).await {
-                        panic!("{}", err);
-                    }
-                }
-            }
-        })
-    }))
-}
-
-#[instrument(skip_all, name = "on_ice_candidate", level = "trace")]
-fn on_data_channel() -> Result<OnDataChannelHdlrFn, SpanErr<PhonexError>> {
-    Ok(Box::new(move |d: Arc<RTCDataChannel>| {
-        let d_label = d.label().to_owned();
-        let d_id = d.id();
-        println!("New DataChannel {d_label} {d_id}");
-
-        Box::pin(async move {
-            let d2 = Arc::clone(&d);
-            let d_label2 = d_label.clone();
-            let d_id2 = d_id;
-            d.on_open(Box::new(move || {
-                println!("Data channel '{d_label2}'-'{d_id2}' open. Random messages will now be sent to any connected DataChannels every 5 seconds");
-                Box::pin(async move {
-                    let mut result = Result::<usize>::Ok(0);
-                    while result.is_ok() {
-                        let timeout = tokio::time::sleep(Duration::from_secs(5));
-                        tokio::pin!(timeout);
-
-                        tokio::select! {
-                            _ = timeout.as_mut() =>{
-                                let message = math_rand_alpha(15);
-                                println!("Sending '{message}'");
-                                result = d2.send_text(message).await.map_err(Into::into);
-                            }
-                        };
-                    }
-                })
-            }));
-
-            d.on_message(Box::new(move |msg: DataChannelMessage| {
-                let msg_str = String::from_utf8(msg.data.to_vec())
-                    .map_err(PhonexError::ConvertByteToString)
-                    .unwrap();
-                println!("Message from DataChannel '{d_label}': '{msg_str}'");
-                Box::pin(async {})
-            }));
-        })
-    }))
-}
-
-#[instrument(skip_all, name = "on_peer_connection_state_change", level = "trace")]
-fn on_peer_connection_state_change(
-    done_tx: Sender<()>,
-) -> Result<OnPeerConnectionStateChangeHdlrFn, SpanErr<PhonexError>> {
-    Ok(Box::new(move |s: RTCPeerConnectionState| {
-        println!("Peer Connection State has changed: {s}");
-
-        if s == RTCPeerConnectionState::Failed {
-            println!("Peer Connection has gone to failed exiting");
-            let _ = done_tx.try_send(());
-        }
-
-        Box::pin(async {})
-    }))
-}
-
 #[tokio::main]
 #[instrument(skip_all, name = "main", level = "trace")]
 async fn main() -> Result<(), SpanErr<PhonexError>> {
     initialize_tracing_subscriber()?;
 
-    let _ = dotenv();
-    let args = Args::parse();
-    println!("{:?}", args);
+    let start_time = Instant::now();
+    let (req_tx, req_rx) = mpsc::channel::<Handshake>(100);
+    let (res_tx, res_rx) = mpsc::channel::<Handshake>(100);
 
-    let peer_connection = initialize_peer_connection().await?;
-
-    peer_connection.on_ice_candidate(on_ice_candidate(
-        Arc::downgrade(&peer_connection),
-        Arc::clone(&handshake::PENDING_CANDIDATES),
-        args.offer_address.clone(),
-    )?);
-
-    let pc = Arc::clone(&peer_connection);
-    tokio::spawn(async move {
-        handshake::serve(args.offer_address, args.answer_address, &pc)
-            .await
-            .unwrap();
-    });
-
-    let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
-
-    peer_connection.on_peer_connection_state_change(on_peer_connection_state_change(done_tx)?);
-    peer_connection.on_data_channel(on_data_channel()?);
-
-    println!("Press ctrl-c to stop");
-    tokio::select! {
-        _ = done_rx.recv() => {
-            println!("received done signal!");
-        }
-        _ = tokio::signal::ctrl_c() => {
-            println!();
-        }
-    };
-
-    peer_connection
-        .close()
+    let (ws_stream, _) = connect_async(SERVER)
         .await
-        .map_err(PhonexError::ClosePeerConnection)?;
+        .map_err(PhonexError::ConnectWebsocket)?;
+
+    let (sender, receiver) = ws_stream.split();
+
+    let mut w = websocket::WebSocket::new(res_rx, req_tx, sender, receiver)?;
+    let mut wrc = wrc::WebRTC::new(Cell::new(req_rx), res_tx).await?;
+
+    let webrtc_task = tokio::spawn(async move { wrc.handshake().await });
+    let websocket_task = tokio::spawn(async move { w.spawn().await });
+
+    let _ = websocket_task.await;
+    let _ = webrtc_task.await;
+
+    let end_time = Instant::now();
+
+    println!("Total time taken {:#?}", end_time - start_time);
+
+    // wrc.close_connection().await;
 
     Ok(())
 }
