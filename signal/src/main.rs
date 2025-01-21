@@ -1,12 +1,13 @@
-mod err;
-mod r#match;
-mod match_server;
+pub mod err;
+pub mod r#match;
+pub mod match_server;
+pub mod message;
 
 use futures::stream::{SplitSink, StreamExt};
 use futures::SinkExt;
 use match_server::Server;
+use message::{CandidateMessage, RequestType, SessionDescriptionMessage};
 use r#match::{MatchRegisterRequest, MatchRequest, MatchResponse};
-use signal::{CandidateMessage, RequestType, SessionDescriptionMessage};
 use std::sync::Arc;
 use std::{cell::Cell, net::SocketAddr};
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -25,7 +26,7 @@ use axum::{
     Router,
 };
 
-use err::PhonexError;
+use err::SignalError;
 use lazy_static::lazy_static;
 use tracing_spanned::SpanErr;
 
@@ -37,7 +38,7 @@ lazy_static! {
 }
 
 #[instrument(skip_all, name = "initialize_tracing_subscriber", level = "trace")]
-fn initialize_tracing_subscriber() -> Result<(), SpanErr<PhonexError>> {
+fn initialize_tracing_subscriber() -> Result<(), SpanErr<SignalError>> {
     tracing_subscriber::Registry::default()
         .with(
             tracing_subscriber::fmt::layer()
@@ -46,14 +47,14 @@ fn initialize_tracing_subscriber() -> Result<(), SpanErr<PhonexError>> {
         )
         .with(ErrorLayer::default())
         .try_init()
-        .map_err(PhonexError::InitializeTracingSubscriber)?;
+        .map_err(SignalError::InitializeTracingSubscriber)?;
 
     Ok(())
 }
 
 #[tokio::main]
 #[instrument(skip_all, name = "main", level = "trace")]
-async fn main() -> Result<(), SpanErr<PhonexError>> {
+async fn main() -> Result<(), SpanErr<SignalError>> {
     initialize_tracing_subscriber()?;
 
     let (tx, rx) = mpsc::channel::<MatchRequest>(100);
@@ -74,11 +75,11 @@ async fn main() -> Result<(), SpanErr<PhonexError>> {
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
-        .map_err(PhonexError::BuildTcpListener)?;
+        .map_err(SignalError::BuildTcpListener)?;
 
     axum::serve(listener, app)
         .await
-        .map_err(PhonexError::ServeHTTP)?;
+        .map_err(SignalError::ServeHTTP)?;
 
     Ok(())
 }
@@ -155,15 +156,15 @@ impl RequestHandler {
     }
 
     #[instrument(skip_all, name = "request_handler_string", level = "trace")]
-    async fn string(self, message: String) -> Result<(), PhonexError> {
-        let deserialized: signal::Message =
-            serde_json::from_str(&message).map_err(PhonexError::SerializeToJSONError)?;
+    async fn string(self, message: String) -> Result<(), SignalError> {
+        let deserialized: message::Message =
+            serde_json::from_str(&message).map_err(SignalError::SerializeToJSONError)?;
 
         match deserialized.request_type {
             RequestType::Register => {
-                let register_message: signal::RegisterMessage =
+                let register_message: message::RegisterMessage =
                     serde_json::from_str(&deserialized.raw)
-                        .map_err(PhonexError::DeserializeJSONError)?;
+                        .map_err(SignalError::DeserializeJSONError)?;
 
                 self.request_sender
                     .send(MatchRequest::Register(MatchRegisterRequest {
@@ -171,29 +172,29 @@ impl RequestHandler {
                         chan: self.response_sender,
                     }))
                     .await
-                    .map_err(PhonexError::SendMatchRequest)?;
+                    .map_err(SignalError::SendMatchRequest)?;
             }
             RequestType::SessionDescription => {
-                let session_description_message: signal::SessionDescriptionMessage =
+                let session_description_message: message::SessionDescriptionMessage =
                     serde_json::from_str(&deserialized.raw)
-                        .map_err(PhonexError::DeserializeJSONError)?;
+                        .map_err(SignalError::DeserializeJSONError)?;
 
                 self.request_sender
                     .send(MatchRequest::SessionDescription(
                         session_description_message.into(),
                     ))
                     .await
-                    .map_err(PhonexError::SendMatchRequest)?;
+                    .map_err(SignalError::SendMatchRequest)?;
             }
             RequestType::Candidate => {
-                let candidate_message: signal::CandidateMessage =
+                let candidate_message: message::CandidateMessage =
                     serde_json::from_str(&deserialized.raw)
-                        .map_err(PhonexError::DeserializeJSONError)?;
+                        .map_err(SignalError::DeserializeJSONError)?;
 
                 self.request_sender
                     .send(MatchRequest::Candidate(candidate_message.into()))
                     .await
-                    .map_err(PhonexError::SendMatchRequest)?;
+                    .map_err(SignalError::SendMatchRequest)?;
             }
             RequestType::Ping => {
                 println!(">>> receive ping");
@@ -209,9 +210,9 @@ impl RequestHandler {
     }
 
     #[instrument(skip_all, name = "request_handler_binary", level = "trace")]
-    async fn binary(self, message: Vec<u8>) -> Result<(), PhonexError> {
+    async fn binary(self, message: Vec<u8>) -> Result<(), SignalError> {
         let converted: String =
-            String::from_utf8(message.to_vec()).map_err(PhonexError::ConvertToStringError)?;
+            String::from_utf8(message.to_vec()).map_err(SignalError::ConvertToStringError)?;
         return self.string(converted).await;
     }
 }
@@ -234,7 +235,7 @@ impl ResponseHandler {
     }
 
     #[instrument(skip_all, name = "response_handler_serve", level = "trace")]
-    async fn serve(&mut self) -> Result<(), PhonexError> {
+    async fn serve(&mut self) -> Result<(), SignalError> {
         loop {
             tokio::select! {
                 val = self.response_receiver.get_mut().recv() => {
@@ -249,14 +250,14 @@ impl ResponseHandler {
                                 sdp: value.sdp,
                             };
 
-                            let response = signal::Message{
+                            let response = message::Message{
                                 request_type: RequestType::SessionDescription,
-                                raw: serde_json::to_string(&raw).map_err(PhonexError::SerializeToJSONError)?,
+                                raw: serde_json::to_string(&raw).map_err(SignalError::SerializeToJSONError)?,
                             };
 
-                            let text = serde_json::to_string(&response).map_err(PhonexError::SerializeToJSONError)?;
+                            let text = serde_json::to_string(&response).map_err(SignalError::SerializeToJSONError)?;
 
-                            self.ws.send(Message::Text(text.into())).await.map_err(PhonexError::WriteWebsocket)?;
+                            self.ws.send(Message::Text(text.into())).await.map_err(SignalError::WriteWebsocket)?;
                         }
                         MatchResponse::Candidate(value) => {
                             println!("{:?}", value);
@@ -266,14 +267,14 @@ impl ResponseHandler {
                                 candidate: value.candidate,
                             };
 
-                            let response = signal::Message{
+                            let response = message::Message{
                                 request_type: RequestType::Candidate,
-                                raw: serde_json::to_string(&raw).map_err(PhonexError::SerializeToJSONError)?,
+                                raw: serde_json::to_string(&raw).map_err(SignalError::SerializeToJSONError)?,
                             };
 
-                            let text = serde_json::to_string(&response).map_err(PhonexError::SerializeToJSONError)?;
+                            let text = serde_json::to_string(&response).map_err(SignalError::SerializeToJSONError)?;
 
-                            self.ws.send(Message::Text(text.into())).await.map_err(PhonexError::WriteWebsocket)?;
+                            self.ws.send(Message::Text(text.into())).await.map_err(SignalError::WriteWebsocket)?;
                         }
                     }
                 }

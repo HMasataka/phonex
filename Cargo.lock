@@ -468,7 +468,6 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "axum 0.8.1",
- "errors",
  "futures",
  "futures-util",
  "serde",
@@ -680,22 +679,6 @@ dependencies = [
  "sec1",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "errors"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tokio-tungstenite 0.26.1",
- "tracing",
- "tracing-error",
- "tracing-subscriber",
- "tracing_spanned",
- "webrtc",
 ]
 
 [[package]]
@@ -1888,7 +1871,6 @@ dependencies = [
  "axum 0.7.9",
  "clap",
  "dotenvy",
- "errors",
  "futures",
  "futures-util",
  "lazy_static",

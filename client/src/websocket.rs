@@ -11,7 +11,7 @@ use futures::sink::SinkExt;
 use futures::stream::SplitSink;
 use futures::stream::SplitStream;
 use futures_util::StreamExt;
-use signal::RequestType;
+use signal::message::RequestType;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
@@ -112,10 +112,10 @@ impl WebSocket {
 
     #[instrument(skip_all, name = "websocket_register", level = "trace")]
     async fn register(&mut self) -> Result<(), SpanErr<PhonexError>> {
-        let register = signal::Message::new_register_message(ID.into())
-            .map_err(PhonexError::WrapCommonError)?
+        let register = signal::message::Message::new_register_message(ID.into())
+            .map_err(PhonexError::WrapSignalError)?
             .try_to_string()
-            .map_err(PhonexError::WrapCommonError)?;
+            .map_err(PhonexError::WrapSignalError)?;
 
         let mut ws_sender = self.ws_sender.lock().await;
 
@@ -135,22 +135,24 @@ async fn send_message(
 ) -> ControlFlow<(), ()> {
     match handshake {
         Handshake::SessionDescription(v) => {
-            let m = match signal::Message::new_session_description_message(v.target_id, v.sdp) {
-                Ok(m) => {
-                    let s = match m.try_to_string() {
-                        Ok(s) => s,
-                        Err(e) => {
-                            println!("convert error: {e}");
-                            return ControlFlow::Break(());
-                        }
-                    };
-                    s
-                }
-                Err(e) => {
-                    println!("build sdp error: {e}");
-                    return ControlFlow::Break(());
-                }
-            };
+            let m =
+                match signal::message::Message::new_session_description_message(v.target_id, v.sdp)
+                {
+                    Ok(m) => {
+                        let s = match m.try_to_string() {
+                            Ok(s) => s,
+                            Err(e) => {
+                                println!("convert error: {e}");
+                                return ControlFlow::Break(());
+                            }
+                        };
+                        s
+                    }
+                    Err(e) => {
+                        println!("build sdp error: {e}");
+                        return ControlFlow::Break(());
+                    }
+                };
 
             if let Err(e) = ws_sender.lock().await.send(Message::Text(m.into())).await {
                 println!("Could not send Close due to {e:?}, probably it is ok?");
@@ -158,7 +160,8 @@ async fn send_message(
             };
         }
         Handshake::Candidate(v) => {
-            let m = match signal::Message::new_candidate_message(v.target_id, v.candidate) {
+            let m = match signal::message::Message::new_candidate_message(v.target_id, v.candidate)
+            {
                 Ok(m) => {
                     let s = match m.try_to_string() {
                         Ok(s) => s,
@@ -193,12 +196,12 @@ async fn process_message(
 ) -> ControlFlow<(), ()> {
     match msg {
         Message::Text(message) => {
-            let deserialized: signal::Message = serde_json::from_str(&message).unwrap();
+            let deserialized: signal::message::Message = serde_json::from_str(&message).unwrap();
 
             match deserialized.request_type {
                 RequestType::Register => {}
                 RequestType::SessionDescription => {
-                    let session_description_message: signal::SessionDescriptionMessage =
+                    let session_description_message: signal::message::SessionDescriptionMessage =
                         serde_json::from_str(&deserialized.raw).unwrap();
 
                     println!("sdp: {:?}", session_description_message.sdp.unmarshal());
@@ -212,7 +215,7 @@ async fn process_message(
                         .unwrap();
                 }
                 RequestType::Candidate => {
-                    let candidate_message: signal::CandidateMessage =
+                    let candidate_message: signal::message::CandidateMessage =
                         serde_json::from_str(&deserialized.raw).unwrap();
 
                     handshake_sender
