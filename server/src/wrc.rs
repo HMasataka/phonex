@@ -129,8 +129,6 @@ impl WebRTC {
 
         initialize_data_channel(pc, "data").await?;
 
-        self.offer().await?;
-
         loop {
             tokio::select! {
                 val = self.rx.get_mut().recv()=> {
@@ -141,30 +139,6 @@ impl WebRTC {
                 }
             };
         }
-
-        Ok(())
-    }
-
-    #[instrument(skip_all, name = "webrtc_offer", level = "trace")]
-    async fn offer(&mut self) -> Result<(), SpanErr<PhonexError>> {
-        let offer = self
-            .peer_connection
-            .create_offer(None)
-            .await
-            .map_err(PhonexError::CreateNewOffer)?;
-
-        self.tx
-            .send(Handshake::SessionDescription(SessionDescription {
-                target_id: TARGET.into(),
-                sdp: offer.clone(),
-            }))
-            .await
-            .map_err(PhonexError::SendHandshakeResponse)?;
-
-        self.peer_connection
-            .set_local_description(offer)
-            .await
-            .map_err(PhonexError::SetLocalDescription)?;
 
         Ok(())
     }

@@ -23,8 +23,6 @@ pub enum PhonexError {
     CreateNewPeerConnection(webrtc::Error),
     #[error("failed to create new data channel: {0}")]
     CreateNewDataChannel(webrtc::Error),
-    #[error("failed to create new offer: {0}")]
-    CreateNewOffer(webrtc::Error),
     #[error("failed to create new answer: {0}")]
     CreateNewAnswer(webrtc::Error),
     #[error("failed to set local description: {0}")]

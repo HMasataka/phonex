@@ -21,7 +21,7 @@ use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::RTCPeerConnection;
 
-const TARGET: &str = "2";
+const TARGET: &str = "1";
 
 pub struct WebRTC {
     rx: Cell<Receiver<Handshake>>,
