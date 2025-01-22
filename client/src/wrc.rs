@@ -82,23 +82,31 @@ fn on_ice_candidate(
                     let mut cs = pending_candidates.lock().await;
                     cs.push(candidate);
                 } else {
-                    let req = candidate
-                        .to_json()
-                        .map_err(PhonexError::ConvertToJson)
-                        .unwrap();
-
-                    handshake_sender
-                        .send(Handshake::Candidate(Candidate {
-                            target_id: candidate.stats_id, // FIXME
-                            candidate: req.candidate,
-                        }))
-                        .await
-                        .map_err(PhonexError::SendHandshakeResponse)
-                        .unwrap();
+                    if let Err(e) = handle_candidate(handshake_sender, candidate).await {
+                        println!("on ice candidate error: {e}");
+                    };
                 }
             }
         })
     }))
+}
+
+#[instrument(skip_all, name = "handle_session_description_message", level = "trace")]
+async fn handle_candidate(
+    handshake_sender: Sender<Handshake>,
+    candidate: RTCIceCandidate,
+) -> Result<(), PhonexError> {
+    let req = candidate.to_json().map_err(PhonexError::ConvertToJson)?;
+
+    handshake_sender
+        .send(Handshake::Candidate(Candidate {
+            target_id: candidate.stats_id, // FIXME
+            candidate: req.candidate,
+        }))
+        .await
+        .map_err(PhonexError::SendHandshakeResponse)?;
+
+    Ok(())
 }
 
 impl WebRTC {
