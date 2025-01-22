@@ -19,6 +19,8 @@ use webrtc::ice_transport::ice_gatherer::OnLocalCandidateHdlrFn;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
+use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
+use webrtc::peer_connection::OnPeerConnectionStateChangeHdlrFn;
 use webrtc::peer_connection::RTCPeerConnection;
 
 const TARGET: &str = "1";
@@ -91,6 +93,22 @@ fn on_ice_candidate(
     }))
 }
 
+#[instrument(skip_all, name = "on_peer_connection_state_change", level = "trace")]
+fn on_peer_connection_state_change(
+    done_tx: Sender<()>,
+) -> Result<OnPeerConnectionStateChangeHdlrFn, SpanErr<PhonexError>> {
+    Ok(Box::new(move |s: RTCPeerConnectionState| {
+        println!("Peer Connection State has changed: {s}");
+
+        if s == RTCPeerConnectionState::Connected {
+            println!("Peer Connection has gone to failed exiting");
+            let _ = done_tx.try_send(());
+        }
+
+        Box::pin(async {})
+    }))
+}
+
 #[instrument(skip_all, name = "handle_session_description_message", level = "trace")]
 async fn handle_candidate(
     handshake_sender: Sender<Handshake>,
@@ -137,6 +155,10 @@ impl WebRTC {
             Arc::clone(&self.pending_candidates),
         )?);
 
+        let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
+
+        pc.on_peer_connection_state_change(on_peer_connection_state_change(done_tx)?);
+
         initialize_data_channel(pc, "data").await?;
 
         self.offer().await?;
@@ -148,6 +170,10 @@ impl WebRTC {
                      if self.handle_handshake(request).await.is_break(){
                         break;
                     }
+                }
+                _ = done_rx.recv()=>{
+                    println!("connected!");
+                    break;
                 }
             };
         }
